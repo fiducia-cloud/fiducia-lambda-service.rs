@@ -196,10 +196,7 @@ impl Engine {
             r
         };
         let input = obj.get("input").cloned().unwrap_or(Value::Null).to_string();
-        let idem = {
-            let k = first_present(&obj, &["idempotencyKey", "idempotency_key"]);
-            k
-        };
+        let idem = first_present(&obj, &["idempotencyKey", "idempotency_key"]);
         // fiducia-node idempotency gate (authority), in addition to the store's.
         if !idem.is_empty() {
             match self.coord.claim_idempotency(&idem).await {
@@ -441,6 +438,7 @@ impl Engine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn activity_failure(
         &self,
         run_id: &str,

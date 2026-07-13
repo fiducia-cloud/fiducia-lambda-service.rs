@@ -522,12 +522,40 @@ mod tests {
     #[tokio::test]
     async fn capped_line_rejects_oversized_line() {
         // 100 bytes with no newline, cap 16 → must not buffer past the cap.
-        let big = vec![b'a'; 100];
+        let big = [b'a'; 100];
         let mut r = BufReader::new(&big[..]);
         assert!(matches!(
             read_capped_line(&mut r, 16).await,
             LineRead::TooLong
         ));
+    }
+
+    #[tokio::test]
+    async fn capped_line_keeps_the_original_inclusive_byte_boundary() {
+        // The framing newline counts toward the byte cap, matching
+        // AsyncBufReadExt::read_line's returned byte count in the old path.
+        let exactly_with_newline = b"abcd\nleftover";
+        let mut r = BufReader::new(&exactly_with_newline[..]);
+        match read_capped_line(&mut r, 5).await {
+            LineRead::Line(line) => assert_eq!(line, "abcd"),
+            _ => panic!("expected an exactly-at-cap framed line"),
+        }
+
+        let over_with_newline = b"abcde\n";
+        let mut r = BufReader::new(&over_with_newline[..]);
+        assert!(matches!(
+            read_capped_line(&mut r, 5).await,
+            LineRead::TooLong
+        ));
+
+        // EOF is also a valid line terminator; exactly `cap` payload bytes are
+        // accepted when no newline is present.
+        let exactly_at_eof = b"abcde";
+        let mut r = BufReader::new(&exactly_at_eof[..]);
+        match read_capped_line(&mut r, 5).await {
+            LineRead::Line(line) => assert_eq!(line, "abcde"),
+            _ => panic!("expected an exactly-at-cap EOF-terminated line"),
+        }
     }
 
     #[tokio::test]

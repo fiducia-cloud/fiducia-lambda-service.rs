@@ -218,7 +218,7 @@ impl Store {
             .values()
             .filter(|r| def_ref.is_empty() || r.definition_ref == def_ref)
             .collect();
-        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        items.sort_by_key(|run| std::cmp::Reverse(run.created_at));
         let limited: Vec<Value> = items
             .into_iter()
             .take(limit.max(0) as usize)
@@ -294,9 +294,7 @@ impl Store {
         match runs.get_mut(run_id) {
             None => Err(Commit::Err("workflow run not found".into())),
             Some(run) => {
-                if run.status == "canceled" {
-                    Err(Commit::Conflict(run_id.to_string()))
-                } else if run.version != expected_version {
+                if run.status == "canceled" || run.version != expected_version {
                     Err(Commit::Conflict(run_id.to_string()))
                 } else {
                     Ok(run)

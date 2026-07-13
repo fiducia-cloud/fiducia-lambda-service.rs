@@ -1,6 +1,6 @@
 # The build fetches immutable sibling path dependencies rather than trusting
 # whatever happens to be present in a local parent directory.
-FROM rust:1.95.0-bookworm AS build
+FROM rust:1.97.0-bookworm AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates
 WORKDIR /workspace

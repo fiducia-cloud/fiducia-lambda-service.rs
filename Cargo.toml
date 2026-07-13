@@ -1,0 +1,55 @@
+[package]
+name = "fiducia-lambda-service"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Lambda/function runtime for fiducia.cloud — runs stored functions in reusable, sandboxed child processes and drives a durable, Temporal-style workflow engine. Rust port of the Gleam/Erlang `gleam-lambda-runner`."
+authors = ["fiducia.cloud"]
+license = "MIT"
+repository = "https://github.com/fiducia-cloud/fiducia-lambda-service.rs"
+readme = "README.md"
+keywords = ["lambda", "functions", "workflow", "nats", "sandbox"]
+categories = ["web-programming", "concurrency"]
+
+[[bin]]
+name = "fiducia-lambda-service"
+path = "src/main.rs"
+
+[lib]
+name = "fiducia_lambda_service"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time", "signal"] }
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+parking_lot = "0.12"
+regex = "1"
+# NATS is the cross-service message bus (workflow events, container-pool
+# dispatch). An external NATS instance is assumed to exist.
+async-nats = "0.38"
+bytes = "1"
+
+# Shared, generated payload/error contract — the one source of truth for the
+# types every fiducia service speaks (see fiducia-interfaces).
+fiducia-interfaces = { path = "../fiducia-interfaces/generated/rust" }
+
+# The Rust fiducia client — coordination primitives (service registration,
+# idempotency, distributed locks) over PROTOCOL.md. Blocking (ureq); calls run
+# on the blocking pool. Package name is `fiducia-client`.
+fiducia-client = { path = "../fiducia-clients/clients/rust" }
+
+[features]
+default = []
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

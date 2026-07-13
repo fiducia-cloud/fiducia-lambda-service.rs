@@ -1,0 +1,83 @@
+# flags-2-env flag schema for the fiducia-lambda-service: maps command-line
+# flags to the environment variables the runtime reads at boot (see
+# src/config.rs, src/workflow/engine.rs, src/main.rs). Consumed by
+# scripts/with-flags2env.sh and audited in CI (cli-flags.yml). Flags whose help
+# ends with "(secret)" carry credentials and must not be logged.
+[help]
+url = "https://github.com/fiducia-cloud/fiducia-lambda-service.rs"
+columns = ["options", "env", "type", "description"]
+
+[parse]
+allow_unknown = false
+
+[flags.host]
+env = "HOST"
+aliases = ["host"]
+type = "string"
+help = "Bind address for the HTTP server (default 0.0.0.0)."
+
+[flags.port]
+env = "PORT"
+aliases = ["port"]
+type = "integer"
+help = "Port for the HTTP server (default 8083)."
+
+[flags.max-body-bytes]
+env = "LAMBDA_MAX_BODY_BYTES"
+aliases = ["max-body-bytes"]
+type = "integer"
+help = "Max request body accepted on invoke/check/workflow endpoints (default 5242880)."
+
+[flags.database-url]
+env = "LAMBDA_DATABASE_URL"
+aliases = ["database-url"]
+type = "string"
+help = "Postgres URL used by psql to load function definitions (secret)."
+
+[flags.nats-url]
+env = "NATS_URL"
+aliases = ["nats-url"]
+type = "string"
+help = "NATS server URL. Absent → publisher/dispatcher no-op."
+
+[flags.workflow-event-subject]
+env = "NATS_WORKFLOW_EVENT_SUBJECT"
+aliases = ["workflow-event-subject"]
+type = "string"
+help = "Subject workflow lifecycle events publish to."
+
+[flags.fiducia-base-url]
+env = "FIDUCIA_BASE_URL"
+aliases = ["fiducia-base-url"]
+type = "string"
+help = "Optional fiducia-node coordination endpoint (also FIDUCIA_EDGE_URL)."
+
+[flags.workflow-engine-enabled]
+env = "WORKFLOW_ENGINE_ENABLED"
+aliases = ["workflow-engine-enabled"]
+type = "string"
+help = "Enable/disable the durable workflow scheduler."
+
+[flags.child-idle-ms]
+env = "LAMBDA_CHILD_IDLE_MS"
+aliases = ["child-idle-ms"]
+type = "integer"
+help = "Idle window before a warm child process is reaped, ms (default 300000)."
+
+[flags.child-timeout-ms]
+env = "LAMBDA_CHILD_TIMEOUT_MS"
+aliases = ["child-timeout-ms"]
+type = "integer"
+help = "Hard per-invocation timeout, ms (default 30000)."
+
+[flags.log-format]
+env = "LOG_FORMAT"
+aliases = ["log-format"]
+type = "string"
+help = "Set to 'json' for structured logs; anything else is human format."
+
+[flags.server-auth-secret]
+env = "LAMBDA_SERVER_AUTH_SECRET"
+aliases = ["server-auth-secret"]
+type = "string"
+help = "Shared secret enforced on mutating routes (secret). Also SERVER_AUTH_SECRET / REMOTE_DEV_SERVER_SECRET."

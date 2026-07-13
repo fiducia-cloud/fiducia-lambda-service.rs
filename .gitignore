@@ -1,0 +1,14 @@
+/target
+**/*.rs.bk
+*.pdb
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# local isolated build target dirs
+.cargo-target-*/
+
+# Scratch / git worktrees (tmp/worktrees/*)
+tmp/

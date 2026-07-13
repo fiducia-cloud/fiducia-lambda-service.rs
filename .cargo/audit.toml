@@ -1,0 +1,23 @@
+# cargo-audit configuration.
+#
+# Accepted advisories — rustls-webpki 0.102.8
+# -------------------------------------------
+# RUSTSEC-2026-0104 / 0098 / 0099 / 0049 are all fixed in rustls-webpki
+# >= 0.103.10. The vulnerable 0.102.8 copy is pulled ONLY by
+# `async-nats v0.38.0`, which hard-pins `rustls-webpki ^0.102` in its own
+# Cargo.toml. The first async-nats release that moves to
+# `rustls-webpki ^0.103.10` is 0.49.0, so clearing these advisories requires
+# bumping async-nats 0.38 -> 0.49 — eleven 0.x minor releases, a breaking major
+# bump (JetStream / connect / subscription API changes) with no in-semver path.
+#
+# Per the hardening policy we do NOT force a breaking bump. Risk is bounded:
+# webpki here only verifies the TLS server certificate of the NATS broker, which
+# is trusted internal infrastructure (not attacker-controlled certificate
+# input). Revisit when async-nats is upgraded to >= 0.49.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0049",
+]

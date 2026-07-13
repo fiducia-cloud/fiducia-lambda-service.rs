@@ -20,12 +20,12 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-interfaces
-          ref: 5f2c5279ee19941024455b2843256872485bac82
+          ref: 487e470c45ab5851e8f6f3b1dc048fe067fbf408
           path: fiducia-interfaces
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-clients
-          ref: 7ca1d5d58b8b06dc180232c93e19098202400538
+          ref: bcf2f868697a96d82151c0e4bf0efae258b234e9
           path: fiducia-clients
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
@@ -36,7 +36,7 @@ jobs:
           workspaces: repo
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          tool: cargo-audit@0.21.2
+          tool: cargo-audit@0.22.2
       - name: Format
         working-directory: repo
         run: cargo fmt --all -- --check

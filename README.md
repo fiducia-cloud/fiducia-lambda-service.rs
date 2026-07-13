@@ -111,8 +111,8 @@ accepted only through environment variables, never command-line flags.
 
 CI and the container build consume immutable, verified sibling revisions:
 
-- `fiducia-clients` at `7ca1d5d58b8b06dc180232c93e19098202400538`
-- `fiducia-interfaces` at `5f2c5279ee19941024455b2843256872485bac82`
+- `fiducia-clients` at `bcf2f868697a96d82151c0e4bf0efae258b234e9`
+- `fiducia-interfaces` at `487e470c45ab5851e8f6f3b1dc048fe067fbf408`
 
 The Dockerfile shallow-fetches those exact commits, verifies each detached
 `HEAD`, and compiles with `Cargo.lock`. Update both the CI checkout and matching

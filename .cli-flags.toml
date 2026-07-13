@@ -1,14 +1,17 @@
 # flags-2-env flag schema for the fiducia-lambda-service: maps command-line
 # flags to the environment variables the runtime reads at boot (see
 # src/config.rs, src/workflow/engine.rs, src/main.rs). Consumed by
-# scripts/with-flags2env.sh and audited in CI (cli-flags.yml). Flags whose help
-# ends with "(secret)" carry credentials and must not be logged.
+# scripts/with-flags2env.sh and audited in CI (cli-flags.yml). Secret-bearing
+# variables are environment-only and deliberately excluded from the flag surface.
 [help]
 url = "https://github.com/fiducia-cloud/fiducia-lambda-service.rs"
 columns = ["options", "env", "type", "description"]
 
 [parse]
 allow_unknown = false
+
+[env]
+ignore = ["LAMBDA_DATABASE_URL", "LAMBDA_SERVER_AUTH_SECRET", "SERVER_AUTH_SECRET", "REMOTE_DEV_SERVER_SECRET", "FIDUCIA_NODE_INTERNAL_SECRET", "FIDUCIA_INTERNAL_SECRET"]
 
 [flags.host]
 env = "HOST"
@@ -28,12 +31,6 @@ aliases = ["max-body-bytes"]
 type = "integer"
 help = "Max request body accepted on invoke/check/workflow endpoints (default 5242880)."
 
-[flags.database-url]
-env = "LAMBDA_DATABASE_URL"
-aliases = ["database-url"]
-type = "string"
-help = "Postgres URL used by psql to load function definitions (secret)."
-
 [flags.nats-url]
 env = "NATS_URL"
 aliases = ["nats-url"]
@@ -46,11 +43,23 @@ aliases = ["workflow-event-subject"]
 type = "string"
 help = "Subject workflow lifecycle events publish to."
 
-[flags.fiducia-base-url]
-env = "FIDUCIA_BASE_URL"
-aliases = ["fiducia-base-url"]
+[flags.fiducia-node-url]
+env = "FIDUCIA_NODE_URL"
+aliases = ["fiducia-node-url", "fiducia-base-url"]
 type = "string"
-help = "Optional fiducia-node coordination endpoint (also FIDUCIA_EDGE_URL)."
+help = "Optional direct fiducia-node endpoint (FIDUCIA_BASE_URL remains an env-only compatibility alias)."
+
+[flags.fiducia-node-org-id]
+env = "FIDUCIA_NODE_ORG_ID"
+aliases = ["fiducia-node-org-id"]
+type = "string"
+help = "Stable tenant scope for lambda workflow coordination (default fiducia-lambda-service)."
+
+[flags.fiducia-service-address]
+env = "FIDUCIA_SERVICE_ADDRESS"
+aliases = ["fiducia-service-address"]
+type = "string"
+help = "Reachable address registered with fiducia-node when coordination is enabled."
 
 [flags.workflow-engine-enabled]
 env = "WORKFLOW_ENGINE_ENABLED"
@@ -75,9 +84,3 @@ env = "LOG_FORMAT"
 aliases = ["log-format"]
 type = "string"
 help = "Set to 'json' for structured logs; anything else is human format."
-
-[flags.server-auth-secret]
-env = "LAMBDA_SERVER_AUTH_SECRET"
-aliases = ["server-auth-secret"]
-type = "string"
-help = "Shared secret enforced on mutating routes (secret). Also SERVER_AUTH_SECRET / REMOTE_DEV_SERVER_SECRET."

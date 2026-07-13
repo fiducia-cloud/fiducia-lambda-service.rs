@@ -199,10 +199,16 @@ impl Engine {
         let idem = first_present(&obj, &["idempotencyKey", "idempotency_key"]);
         // fiducia-node idempotency gate (authority), in addition to the store's.
         if !idem.is_empty() {
-            match self.coord.claim_idempotency(&idem).await {
-                Ok(false) => tracing::info!(idem, "workflow start deduplicated by fiducia-node"),
-                Ok(true) => {}
-                Err(e) => tracing::warn!(error = %e, "idempotency claim unavailable; proceeding"),
+            if let Some(existing) = self.store.run_for_idempotency_key(&idem) {
+                return Ok(existing);
+            }
+            let claimed = self
+                .coord
+                .claim_idempotency(&idem)
+                .await
+                .map_err(|error| format!("fiducia-node idempotency claim failed: {error}"))?;
+            if !claimed {
+                return Err("workflow idempotency key already claimed".to_string());
             }
         }
         let run = self.store.create_run(&def_ref, &input, &idem).await?;
@@ -279,12 +285,9 @@ impl Engine {
             Ok(Some(lease)) => lease,
             Ok(None) => return, // another replica owns this run right now
             Err(e) => {
-                tracing::warn!(error = %e, run_id, "run lease unavailable; proceeding single-node");
-                crate::coord::RunLease {
-                    key: format!("workflow/run/{run_id}"),
-                    lock_id: run_id.clone(),
-                    fencing_token: 0,
-                }
+                WfMetrics::inc(&self.metrics.worker_exceptions);
+                tracing::error!(error = %e, run_id, "run lease unavailable; refusing to advance run");
+                return;
             }
         };
 
@@ -293,7 +296,10 @@ impl Engine {
             WfMetrics::inc(&self.metrics.worker_exceptions);
             tracing::error!(run_id, %err, "workflow step crashed");
         }
-        self.coord.release_run(&lease).await;
+        if let Err(error) = self.coord.release_run(&lease).await {
+            WfMetrics::inc(&self.metrics.worker_exceptions);
+            tracing::error!(%error, run_id, "failed to release authoritative run lease");
+        }
     }
 
     async fn do_process_run(

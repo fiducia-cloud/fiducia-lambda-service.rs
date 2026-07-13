@@ -3,6 +3,21 @@
 //! documented default, read once at boot.
 
 use std::net::IpAddr;
+use thiserror::Error;
+
+pub const DEFAULT_FIDUCIA_NODE_ORG_ID: &str = "fiducia-lambda-service";
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ConfigError {
+    #[error("FIDUCIA_NODE_INTERNAL_SECRET (or FIDUCIA_INTERNAL_SECRET) is required when FIDUCIA_NODE_URL/FIDUCIA_BASE_URL is configured")]
+    MissingNodeSecret,
+    #[error("FIDUCIA_NODE_ORG_ID must be non-empty, at most 128 bytes, and contain no whitespace or control characters")]
+    InvalidNodeOrg,
+    #[error(
+        "FIDUCIA_SERVICE_ADDRESS is required when FIDUCIA_NODE_URL/FIDUCIA_BASE_URL is configured"
+    )]
+    MissingServiceAddress,
+}
 
 /// Static server configuration read from the environment at startup.
 #[derive(Debug, Clone)]
@@ -20,9 +35,15 @@ pub struct Config {
     pub nats_url: Option<String>,
     /// Subject workflow lifecycle events are published to.
     pub workflow_event_subject: String,
-    /// Optional fiducia coordination endpoint (edge / load balancer). When set,
-    /// this instance registers as a service and uses idempotency claims.
+    /// Optional direct fiducia-node endpoint. `FIDUCIA_NODE_URL` is preferred;
+    /// `FIDUCIA_BASE_URL` remains a compatibility alias.
     pub fiducia_base_url: Option<String>,
+    /// Required cluster secret whenever the direct node endpoint is configured.
+    pub fiducia_node_internal_secret: Option<String>,
+    /// Stable tenant namespace for lambda workflow coordination.
+    pub fiducia_node_org_id: String,
+    /// Reachable address published in fiducia-node service discovery.
+    pub fiducia_service_address: Option<String>,
     /// Default idle window before a warm child process is reaped (ms).
     pub child_idle_ms: u64,
     /// Default hard per-invocation timeout (ms).
@@ -30,10 +51,10 @@ pub struct Config {
 }
 
 fn env_opt(key: &str) -> Option<String> {
-    match std::env::var(key) {
-        Ok(v) if !v.trim().is_empty() => Some(v),
-        _ => None,
-    }
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -45,7 +66,7 @@ fn env_num<T: std::str::FromStr>(key: &str, default: T) -> T {
 }
 
 impl Config {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self, ConfigError> {
         // Auth secret resolution order matches server_auth_secret/0 in
         // http_server.gleam.
         let server_auth_secret = env_opt("LAMBDA_SERVER_AUTH_SECRET")
@@ -65,7 +86,19 @@ impl Config {
             }
         };
 
-        Config {
+        let fiducia_base_url = env_opt("FIDUCIA_NODE_URL").or_else(|| env_opt("FIDUCIA_BASE_URL"));
+        let fiducia_node_internal_secret =
+            env_opt("FIDUCIA_NODE_INTERNAL_SECRET").or_else(|| env_opt("FIDUCIA_INTERNAL_SECRET"));
+        let fiducia_node_org_id = env_or("FIDUCIA_NODE_ORG_ID", DEFAULT_FIDUCIA_NODE_ORG_ID);
+        let fiducia_service_address = env_opt("FIDUCIA_SERVICE_ADDRESS");
+        validate_node_coordination(
+            fiducia_base_url.as_deref(),
+            fiducia_node_internal_secret.as_deref(),
+            &fiducia_node_org_id,
+            fiducia_service_address.as_deref(),
+        )?;
+
+        Ok(Config {
             host,
             port,
             max_body_bytes: env_num("LAMBDA_MAX_BODY_BYTES", 5_242_880),
@@ -76,10 +109,13 @@ impl Config {
                 "NATS_WORKFLOW_EVENT_SUBJECT",
                 "dd.remote.workflows.events",
             ),
-            fiducia_base_url: env_opt("FIDUCIA_BASE_URL").or_else(|| env_opt("FIDUCIA_EDGE_URL")),
+            fiducia_base_url,
+            fiducia_node_internal_secret,
+            fiducia_node_org_id,
+            fiducia_service_address,
             child_idle_ms: env_num("LAMBDA_CHILD_IDLE_MS", 300_000),
             child_timeout_ms: env_num("LAMBDA_CHILD_TIMEOUT_MS", 30_000),
-        }
+        })
     }
 
     pub fn server_auth_configured(&self) -> bool {
@@ -87,6 +123,76 @@ impl Config {
     }
 }
 
+fn validate_node_coordination(
+    base_url: Option<&str>,
+    internal_secret: Option<&str>,
+    org_id: &str,
+    service_address: Option<&str>,
+) -> Result<(), ConfigError> {
+    if base_url.is_none() {
+        return Ok(());
+    }
+    if internal_secret.is_none() {
+        return Err(ConfigError::MissingNodeSecret);
+    }
+    if service_address.is_none() {
+        return Err(ConfigError::MissingServiceAddress);
+    }
+    if org_id.is_empty()
+        || org_id.len() > 128
+        || org_id
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(ConfigError::InvalidNodeOrg);
+    }
+    Ok(())
+}
+
 /// The default host command used when a definition does not resolve its own.
 /// Byte-for-byte the `default_command` constant from `http_server.gleam`.
 pub const DEFAULT_NODEJS_HOST_COMMAND: &str = "env -i PATH=\"$PATH\" NODE_ENV=production NODE_NO_WARNINGS=1 NATS_URL=\"${NATS_URL:-}\" CONTAINER_POOL_NATS_URL=\"${CONTAINER_POOL_NATS_URL:-}\" CONTAINER_POOL_NATS_SUBJECT_PREFIX=\"${CONTAINER_POOL_NATS_SUBJECT_PREFIX:-dd.remote.container_pool}\" CONTAINER_POOL_NATS_TIMEOUT_MS=\"${CONTAINER_POOL_NATS_TIMEOUT_MS:-30000}\" node --permission --allow-net child-runtimes/js-function-runner.mjs";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_node_requires_secret_and_valid_distinct_org() {
+        assert_eq!(
+            validate_node_coordination(
+                Some("http://node"),
+                None,
+                DEFAULT_FIDUCIA_NODE_ORG_ID,
+                Some("http://lambda:8083")
+            ),
+            Err(ConfigError::MissingNodeSecret)
+        );
+        assert_eq!(
+            validate_node_coordination(
+                Some("http://node"),
+                Some("secret"),
+                "bad org",
+                Some("http://lambda:8083")
+            ),
+            Err(ConfigError::InvalidNodeOrg)
+        );
+        assert_eq!(
+            validate_node_coordination(
+                Some("http://node"),
+                Some("secret"),
+                DEFAULT_FIDUCIA_NODE_ORG_ID,
+                None
+            ),
+            Err(ConfigError::MissingServiceAddress)
+        );
+        assert!(validate_node_coordination(
+            Some("http://node"),
+            Some("secret"),
+            DEFAULT_FIDUCIA_NODE_ORG_ID,
+            Some("http://lambda:8083")
+        )
+        .is_ok());
+        assert!(validate_node_coordination(None, None, DEFAULT_FIDUCIA_NODE_ORG_ID, None).is_ok());
+    }
+}

@@ -1,0 +1,19 @@
+# Local direct-node stack. The build context is the fiducia.cloud directory so
+# the Dockerfile can copy sibling path dependencies.
+services:
+  lambda-service:
+    build:
+      context: ..
+      dockerfile: fiducia-lambda-service.rs/Dockerfile
+    environment:
+      LAMBDA_SERVER_AUTH_SECRET: ${LAMBDA_SERVER_AUTH_SECRET:?set a high-entropy API secret}
+      FIDUCIA_NODE_URL: ${FIDUCIA_NODE_URL:-http://host.docker.internal:8090}
+      FIDUCIA_NODE_INTERNAL_SECRET: ${FIDUCIA_NODE_INTERNAL_SECRET:?set FIDUCIA_NODE_INTERNAL_SECRET to the fiducia-node cluster secret}
+      FIDUCIA_NODE_ORG_ID: ${FIDUCIA_NODE_ORG_ID:-fiducia-lambda-service}
+      FIDUCIA_SERVICE_ADDRESS: ${FIDUCIA_SERVICE_ADDRESS:-http://lambda-service:8083}
+      NATS_URL: ${NATS_URL:-}
+      LAMBDA_DATABASE_URL: ${LAMBDA_DATABASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8083:8083"

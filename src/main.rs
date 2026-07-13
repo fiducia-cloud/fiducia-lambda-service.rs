@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let config = Config::from_env();
+    let config = Config::from_env()?;
     let instance_id = uuid::Uuid::new_v4().to_string();
     info!(
         host = %config.host,
@@ -28,10 +28,18 @@ async fn main() -> anyhow::Result<()> {
 
     let metrics = Arc::new(Metrics::default());
     let nats = Arc::new(Nats::new(&config));
-    // fiducia-node coordination is OPTIONAL: only active when FIDUCIA_BASE_URL is
-    // set. Absent → the workflow engine runs single-node with permissive leases.
-    let coord = Coordinator::new(config.fiducia_base_url.as_deref(), instance_id.clone());
-    coord.register_service().await;
+    // An absent node URL is an explicit single-process mode. Once a node is
+    // configured, startup requires its internal credentials and registration
+    // must succeed so a broken authority boundary cannot degrade silently.
+    let coord = Coordinator::new(
+        config.fiducia_base_url.as_deref(),
+        config.fiducia_node_internal_secret.as_deref(),
+        &config.fiducia_node_org_id,
+        config.fiducia_service_address.as_deref(),
+        instance_id.clone(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    coord.register_service().await.map_err(anyhow::Error::msg)?;
 
     let child = ChildRunner::new(config.clone(), metrics.clone(), nats.clone());
     let store = Arc::new(Store::new(config.clone()));
@@ -58,7 +66,9 @@ async fn main() -> anyhow::Result<()> {
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,fiducia_lambda_service=debug"));
-    let json = std::env::var("LOG_FORMAT").map(|v| v == "json").unwrap_or(false);
+    let json = std::env::var("LOG_FORMAT")
+        .map(|v| v == "json")
+        .unwrap_or(false);
     let builder = tracing_subscriber::fmt().with_env_filter(filter);
     if json {
         builder.json().init();

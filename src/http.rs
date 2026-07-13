@@ -85,7 +85,10 @@ fn authorization_error(config: &Config, headers: &HeaderMap) -> Option<Response>
 fn workflow_error_status(err: &str) -> StatusCode {
     if err.contains("not found") {
         StatusCode::NOT_FOUND
-    } else if err.contains("not cancelable") || err.contains("not running") {
+    } else if err.contains("not cancelable")
+        || err.contains("not running")
+        || err.contains("already claimed")
+    {
         StatusCode::CONFLICT
     } else if err.contains("required")
         || err.contains("invalid")
@@ -298,5 +301,18 @@ async fn workflow_list(
     match st.engine.list_runs(&definition, limit) {
         Ok(runs) => json_response(StatusCode::OK, format!("{{\"ok\":true,\"runs\":{runs}}}")),
         Err(err) => workflow_error_response(&err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_distributed_idempotency_claim_is_a_conflict() {
+        assert_eq!(
+            workflow_error_status("workflow idempotency key already claimed"),
+            StatusCode::CONFLICT
+        );
     }
 }

@@ -20,13 +20,17 @@ Two subsystems share one process:
 | Concern | Mechanism |
 | --- | --- |
 | Messaging | **NATS** — JetStream for durable workflow lifecycle events, Core NATS request/reply for container-pool dispatch |
-| Coordination (optional) | **fiducia-node** via `fiducia-client` — run leases + fencing tokens, idempotency claims, service registration |
+| Coordination (optional) | **fiducia-node** via an authenticated, tenant-scoped `fiducia-client` — run leases + fencing tokens, idempotency claims, service registration |
 | Function definitions | **Postgres** via `psql` (`LAMBDA_DATABASE_URL`) |
 | Shared types | `fiducia-interfaces` |
 
-fiducia-node is **optional**: with no `FIDUCIA_BASE_URL` the engine runs
-single-node with permissive leases. See the repo's `messaging-architecture`
-guidance — NATS is delivery, fiducia-node is authority.
+fiducia-node is optional only as an explicit single-process mode: with neither
+`FIDUCIA_NODE_URL` nor legacy `FIDUCIA_BASE_URL`, the engine uses local synthetic
+leases. Once a node URL is configured, its internal secret is mandatory,
+startup registration must succeed, and idempotency/lease errors stop the
+operation rather than degrading to local authority. A configured deployment
+also supplies the non-secret `FIDUCIA_SERVICE_ADDRESS` that peers can resolve.
+NATS is delivery; fiducia-node is authority.
 
 ## HTTP API
 
@@ -53,10 +57,19 @@ PORT=8083 LAMBDA_SERVER_AUTH_SECRET=… NATS_URL=nats://… \
   LAMBDA_DATABASE_URL=postgres://… ./target/release/fiducia-lambda-service
 ```
 
+For the direct-node Compose path, both API and node secrets are required:
+
+```sh
+LAMBDA_SERVER_AUTH_SECRET='replace-with-an-api-secret' \
+FIDUCIA_NODE_INTERNAL_SECRET='replace-with-the-node-cluster-secret' \
+docker compose up --build
+```
+
 ## Configuration
 
 Every knob is read once at boot from the environment (`src/config.rs`,
-`src/workflow/engine.rs`). Secrets are marked; never log them.
+`src/workflow/engine.rs`). Secrets are marked, normalized, and excluded from the
+CLI flag surface; never log them.
 
 | Env var | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -65,7 +78,10 @@ Every knob is read once at boot from the environment (`src/config.rs`,
 | `LAMBDA_MAX_BODY_BYTES` | integer | `5242880` | Max invoke/check/workflow body |
 | `NATS_URL` | string | — | NATS server; absent → publisher/dispatcher no-op |
 | `NATS_WORKFLOW_EVENT_SUBJECT` | string | `dd.remote.workflows.events` | Workflow lifecycle event subject |
-| `FIDUCIA_BASE_URL` / `FIDUCIA_EDGE_URL` | string | — | Optional fiducia-node coordination endpoint |
+| `FIDUCIA_NODE_URL` / `FIDUCIA_BASE_URL` | string | — | Optional direct fiducia-node endpoint; `FIDUCIA_BASE_URL` is a compatibility alias |
+| `FIDUCIA_NODE_INTERNAL_SECRET` / `FIDUCIA_INTERNAL_SECRET` | string (**secret**) | — | Required internal-hop secret whenever a node URL is configured; environment-only |
+| `FIDUCIA_NODE_ORG_ID` | string | `fiducia-lambda-service` | Distinct `x-fiducia-org-id` namespace for lambda workflow authority |
+| `FIDUCIA_SERVICE_ADDRESS` | string | — | Required reachable address registered in fiducia-node service discovery whenever coordination is configured |
 | `WORKFLOW_ENGINE_ENABLED` | string | enabled | Toggle the durable workflow scheduler |
 | `LAMBDA_CHILD_IDLE_MS` | integer | `300000` | Warm child idle-reap window |
 | `LAMBDA_CHILD_TIMEOUT_MS` | integer | `30000` | Hard per-invocation timeout |
@@ -87,6 +103,9 @@ scripts/with-flags2env.sh --port 8083 --nats-url nats://localhost:4222 -- \
   ./target/release/fiducia-lambda-service
 ```
 
+`LAMBDA_DATABASE_URL`, API-auth secrets, and the fiducia-node cluster secret are
+accepted only through environment variables, never command-line flags.
+
 ## Security
 
 - **Audit:** `cargo audit` is green (`cargo audit` exits 0). See
@@ -101,6 +120,11 @@ scripts/with-flags2env.sh --port 8083 --nats-url nats://localhost:4222 -- \
   `X-Lambda-Runner-Auth` / `X-Agent-Auth` matching the configured secret; the
   guard is **fail-closed** — requests are rejected when the secret is
   unconfigured or mismatched.
+- **Coordination authority:** direct node calls attach both
+  `x-fiducia-internal-auth` and the distinct `fiducia-lambda-service` org scope.
+  Configured-node registration, idempotency, or lease failures never mint token
+  `0` and never fall back to single-process execution; malformed authority
+  envelopes are rejected as errors.
 - **Input handling:** no `unwrap`/`panic` on request-derived input; request
   bodies are size-limited (`LAMBDA_MAX_BODY_BYTES`) and parsed fallibly. Secrets
   are never written to logs. Child stdout is read through a `MAX_RESULT_BYTES`

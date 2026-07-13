@@ -111,6 +111,18 @@ impl Store {
 
     // ─── creation / external API ────────────────────────────────────────────
 
+    /// Return the run already created for this key on the current replica. The
+    /// workflow engine checks this before asking fiducia-node for a fresh claim,
+    /// preserving same-replica retry semantics without letting a different
+    /// replica create a second run after the distributed claim is taken.
+    pub fn run_for_idempotency_key(&self, idempotency_key: &str) -> Option<String> {
+        self.runs
+            .lock()
+            .values()
+            .find(|run| run.idempotency_key.as_deref() == Some(idempotency_key))
+            .map(|run| run.to_json().to_string())
+    }
+
     pub async fn create_run(
         &self,
         def_ref: &str,
@@ -581,6 +593,9 @@ mod tests {
             nats_url: None,
             workflow_event_subject: "x".into(),
             fiducia_base_url: None,
+            fiducia_node_internal_secret: None,
+            fiducia_node_org_id: crate::config::DEFAULT_FIDUCIA_NODE_ORG_ID.into(),
+            fiducia_service_address: None,
             child_idle_ms: 1000,
             child_timeout_ms: 1000,
         }
@@ -685,6 +700,11 @@ mod tests {
         let a = run_id(&store.create_run(&def, "null", "idem-1").await.unwrap());
         let b = run_id(&store.create_run(&def, "null", "idem-1").await.unwrap());
         assert_eq!(a, b);
+        assert_eq!(
+            run_id(&store.run_for_idempotency_key("idem-1").unwrap()),
+            a
+        );
+        assert!(store.run_for_idempotency_key("missing").is_none());
     }
 
     #[tokio::test]

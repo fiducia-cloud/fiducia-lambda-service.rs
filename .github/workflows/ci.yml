@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-clients
-          ref: ff575d7aa6a0f3e75f312e0963f0fc61bbf9354c
+          ref: 7ca1d5d58b8b06dc180232c93e19098202400538
           path: fiducia-clients
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:

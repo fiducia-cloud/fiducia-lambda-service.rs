@@ -111,7 +111,7 @@ accepted only through environment variables, never command-line flags.
 
 CI and the container build consume immutable, verified sibling revisions:
 
-- `fiducia-clients` at `ff575d7aa6a0f3e75f312e0963f0fc61bbf9354c`
+- `fiducia-clients` at `7ca1d5d58b8b06dc180232c93e19098202400538`
 - `fiducia-interfaces` at `5f2c5279ee19941024455b2843256872485bac82`
 
 The Dockerfile shallow-fetches those exact commits, verifies each detached

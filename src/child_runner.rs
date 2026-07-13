@@ -441,10 +441,9 @@ async fn worker_driver(
             let _ = inv.reply.send(Err("failed to write to lambda child".into()));
             break;
         }
-        // Read exactly one line of result.
-        let mut line = String::new();
-        match reader.read_line(&mut line).await {
-            Ok(0) => {
+        // Read exactly one line of result, bounded so a child cannot OOM us.
+        match read_capped_line(&mut reader, MAX_RESULT_BYTES).await {
+            LineRead::Eof => {
                 // EOF: child exited without a result.
                 let status = child.wait().await.ok();
                 let _ = inv.reply.send(Err(format!(
@@ -456,22 +455,85 @@ async fn worker_driver(
                 )));
                 break;
             }
-            Ok(n) if n > MAX_RESULT_BYTES => {
+            LineRead::TooLong => {
                 let _ = inv
                     .reply
                     .send(Err("lambda child result exceeded byte limit".into()));
                 break;
             }
-            Ok(_) => {
-                let trimmed = line.trim_end_matches(['\n', '\r']).to_string();
+            LineRead::Line(trimmed) => {
                 let _ = inv.reply.send(Ok(trimmed));
             }
-            Err(e) => {
-                let _ = inv.reply.send(Err(format!("child read error: {e}")));
+            LineRead::Err(e) => {
+                let _ = inv.reply.send(Err(e));
                 break;
             }
         }
     }
     alive.store(false, std::sync::atomic::Ordering::SeqCst);
     let _ = child.start_kill();
+}
+
+/// Outcome of reading one newline-framed result line from a child.
+enum LineRead {
+    Line(String),
+    Eof,
+    TooLong,
+    Err(String),
+}
+
+/// Read one newline-framed result, bounded to `cap` bytes.
+///
+/// `read_line` on its own buffers the entire line into memory *before* any size
+/// check, so a child that emits a gigantic line — or never emits a newline at
+/// all — could make the runner allocate without bound. Reading through a
+/// `take`-limited view stops after at most `cap + 1` bytes: a line longer than
+/// `cap` is rejected as `TooLong` and the invocation is failed. Any bytes past
+/// the cap stay buffered in `reader` (harmless — the caller kills the child on
+/// `TooLong`). The accept/reject boundary matches the previous `n > cap` check.
+async fn read_capped_line<R>(reader: &mut R, cap: usize) -> LineRead
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut line = String::new();
+    let mut limited = reader.take(cap as u64 + 1);
+    match limited.read_line(&mut line).await {
+        Ok(0) => LineRead::Eof,
+        Ok(_) if line.len() > cap => LineRead::TooLong,
+        Ok(_) => LineRead::Line(line.trim_end_matches(['\n', '\r']).to_string()),
+        Err(e) => LineRead::Err(format!("child read error: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn capped_line_reads_a_normal_line() {
+        let data = b"hello world\nleftover";
+        let mut r = BufReader::new(&data[..]);
+        match read_capped_line(&mut r, 1024).await {
+            LineRead::Line(l) => assert_eq!(l, "hello world"),
+            _ => panic!("expected a line"),
+        }
+    }
+
+    #[tokio::test]
+    async fn capped_line_rejects_oversized_line() {
+        // 100 bytes with no newline, cap 16 → must not buffer past the cap.
+        let big = vec![b'a'; 100];
+        let mut r = BufReader::new(&big[..]);
+        assert!(matches!(
+            read_capped_line(&mut r, 16).await,
+            LineRead::TooLong
+        ));
+    }
+
+    #[tokio::test]
+    async fn capped_line_reports_eof() {
+        let empty: &[u8] = b"";
+        let mut r = BufReader::new(empty);
+        assert!(matches!(read_capped_line(&mut r, 16).await, LineRead::Eof));
+    }
 }

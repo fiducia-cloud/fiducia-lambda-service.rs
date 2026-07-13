@@ -61,13 +61,10 @@ fn ok_err(err: &str) -> String {
     )
 }
 
-/// Resolve the shared auth secret and check the three accepted headers.
-// Preserve the complete Axum rejection response (status, headers, and body)
-// across every mutation handler instead of reconstructing it at each call site.
-#[allow(clippy::result_large_err)]
-fn authorized(config: &Config, headers: &HeaderMap) -> Result<(), Response> {
+/// Resolve the shared auth secret and return an HTTP error when access is denied.
+fn authorization_error(config: &Config, headers: &HeaderMap) -> Option<Response> {
     let Some(secret) = config.server_auth_secret.as_deref() else {
-        return Err(json_response(
+        return Some(json_response(
             StatusCode::SERVICE_UNAVAILABLE,
             ok_err("SERVER_AUTH_SECRET is not configured"),
         ));
@@ -78,9 +75,9 @@ fn authorized(config: &Config, headers: &HeaderMap) -> Result<(), Response> {
         .filter_map(|v| v.to_str().ok())
         .any(|v| crate::util::constant_time_eq(v.as_bytes(), secret.as_bytes()));
     if presented {
-        Ok(())
+        None
     } else {
-        Err(json_response(
+        Some(json_response(
             StatusCode::UNAUTHORIZED,
             ok_err("unauthorized"),
         ))
@@ -156,7 +153,7 @@ async fn invoke(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     let Ok(payload) = std::str::from_utf8(&body) else {
@@ -186,7 +183,7 @@ async fn invoke(
 }
 
 async fn check(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     let Ok(payload) = std::str::from_utf8(&body) else {
@@ -219,7 +216,7 @@ async fn destroy(
     Path(reuse_key): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     match st.child.destroy(&reuse_key).await {
@@ -237,7 +234,7 @@ async fn destroy(
 // ─── workflow routes ────────────────────────────────────────────────────────
 
 async fn workflow_start(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     let Ok(payload) = std::str::from_utf8(&body) else {
@@ -258,7 +255,7 @@ async fn workflow_signal(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     let Ok(payload) = std::str::from_utf8(&body) else {
@@ -275,7 +272,7 @@ async fn workflow_cancel(
     Path(run_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     match st.engine.cancel_run(&run_id) {
@@ -289,7 +286,7 @@ async fn workflow_get(
     Path(run_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     match st.engine.get_run(&run_id) {
@@ -310,7 +307,7 @@ async fn workflow_list(
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    if let Err(resp) = authorized(&st.config, &headers) {
+    if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }
     let definition = q.definition.unwrap_or_default();

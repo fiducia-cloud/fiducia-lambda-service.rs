@@ -8,7 +8,9 @@ Two subsystems share one process:
 - **Child runner** — runs stored functions (nodejs / python3 / ruby / bash /
   containerized runtimes) in **reusable, sandboxed child processes**. Warm
   workers are keyed by reuse key, reaped when idle, and can be dispatched to
-  `dd-container-pool` over NATS instead of running locally.
+  `dd-container-pool` over NATS instead of running locally. Each local child
+  returns one newline-framed stdout result capped at 1 MiB (including the
+  newline), so an untrusted function cannot force unbounded result buffering.
 - **Workflow engine** — a Temporal-style **durable step machine** (`activity` /
   `sleep` / `waitSignal`) over a persistent store. A scheduler polls for due
   runs and advances each by one step per tick; a crash resumes from the store.
@@ -96,4 +98,11 @@ scripts/with-flags2env.sh --port 8083 --log-format json -- \
   unconfigured or mismatched.
 - **Input handling:** no `unwrap`/`panic` on request-derived input; request
   bodies are size-limited (`LAMBDA_MAX_BODY_BYTES`) and parsed fallibly. Secrets
-  are never written to logs.
+  are never written to logs. Child stdout is read through a `MAX_RESULT_BYTES`
+  (1 MiB) bounded view before it is converted into the invocation result.
+- **Container identity:** the shipped image uses the audited
+  `tool-runner-nonroot` profile and runs as numeric uid/gid `65532:65532`.
+  Unlike the single-binary services it intentionally retains `psql` and
+  `/bin/sh`; direct local container execution should use a derived image with
+  the selected runner, while the default deployment dispatches through the
+  remote container pool.

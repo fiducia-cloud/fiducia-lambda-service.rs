@@ -4,8 +4,8 @@ FROM rust:1.97.0-bookworm@sha256:7d0723df719e7f213b69dc7c8c595985c3f4b060cfbee4f
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates
 WORKDIR /workspace
-ARG CLIENTS_REF=051b332843fb005006be0d564e98ba46b825785c
-ARG INTERFACES_REF=bbd8b52ce729ec34b0a9bff4dda6d0a448181797
+ARG CLIENTS_REF=ff575d7aa6a0f3e75f312e0963f0fc61bbf9354c
+ARG INTERFACES_REF=5f2c5279ee19941024455b2843256872485bac82
 RUN git init fiducia-clients \
     && git -C fiducia-clients remote add origin https://github.com/fiducia-cloud/fiducia-clients.git \
     && git -C fiducia-clients fetch --depth 1 origin "$CLIENTS_REF" \

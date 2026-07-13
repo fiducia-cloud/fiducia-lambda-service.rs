@@ -20,12 +20,12 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-interfaces
-          ref: bbd8b52ce729ec34b0a9bff4dda6d0a448181797
+          ref: 5f2c5279ee19941024455b2843256872485bac82
           path: fiducia-interfaces
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-clients
-          ref: 051b332843fb005006be0d564e98ba46b825785c
+          ref: ff575d7aa6a0f3e75f312e0963f0fc61bbf9354c
           path: fiducia-clients
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:

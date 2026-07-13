@@ -77,16 +77,14 @@ async fn run_psql(database_url: &str, sql: &str) -> Result<String, String> {
         .spawn()
         .map_err(|e| format!("psql executable not found: {e}"))?;
 
-    let out = match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        child.wait_with_output(),
-    )
-    .await
-    {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => return Err(format!("psql failed: {e}")),
-        Err(_) => return Err("lambda definition query timed out".into()),
-    };
+    let out =
+        match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait_with_output())
+            .await
+        {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return Err(format!("psql failed: {e}")),
+            Err(_) => return Err("lambda definition query timed out".into()),
+        };
 
     if out.stdout.len() > 1_048_576 {
         return Err("lambda definition query exceeded byte limit".into());

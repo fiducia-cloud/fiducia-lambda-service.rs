@@ -1,5 +1,5 @@
 # Build context is the fiducia.cloud root (path deps to sibling crates).
-FROM rust:1.85-bookworm AS build
+FROM rust:1.88-bookworm AS build
 WORKDIR /workspace
 COPY fiducia-interfaces/ fiducia-interfaces/
 COPY fiducia-clients/ fiducia-clients/
@@ -12,7 +12,8 @@ RUN cargo build --release --locked --manifest-path fiducia-lambda-service.rs/Car
 FROM debian:bookworm-slim
 LABEL org.fiducia.runtime-profile="tool-runner-nonroot"
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
 COPY --from=build --chown=65532:65532 /workspace/fiducia-lambda-service.rs/target/release/fiducia-lambda-service /app/fiducia-lambda-service
 ENV HOME=/tmp
 USER 65532:65532

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a command with FIDUCIA_* env vars derived from CLI flags: feeds the flags
 # through the pinned flags2env parser (.cli-flags.toml schema) then execs the
-# command. Used to invoke the fiducia-region binary.
+# command. Used to invoke the fiducia-lambda-service binary.
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -39,5 +39,16 @@ if ((${#flags[@]})); then
 else
   exports="$("$bin" shell-env --config "$root/.cli-flags.toml" --)"
 fi
+FLAGS2ENV_UNKNOWN_OPTIONS="[]"
+FLAGS2ENV_PARSE_ERRORS="[]"
 eval "$exports"
+if [[ "$FLAGS2ENV_UNKNOWN_OPTIONS" != "[]" ]]; then
+  echo "flags2env: unknown command-line option" >&2
+  exit 2
+fi
+if [[ "$FLAGS2ENV_PARSE_ERRORS" != "[]" ]]; then
+  echo "flags2env: invalid command-line option value" >&2
+  exit 2
+fi
+unset FLAGS2ENV_UNKNOWN_OPTIONS FLAGS2ENV_PARSE_ERRORS
 exec "$@"

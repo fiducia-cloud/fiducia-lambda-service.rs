@@ -77,7 +77,10 @@ fn authorization_error(config: &Config, headers: &HeaderMap) -> Option<Response>
     if presented {
         None
     } else {
-        Some(json_response(StatusCode::UNAUTHORIZED, ok_err("unauthorized")))
+        Some(json_response(
+            StatusCode::UNAUTHORIZED,
+            ok_err("unauthorized"),
+        ))
     }
 }
 
@@ -133,7 +136,10 @@ async fn metrics(State(st): State<AppState>) -> impl IntoResponse {
         st.engine.metrics_text()
     );
     (
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         body,
     )
 }
@@ -188,7 +194,11 @@ async fn check(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> R
     };
     match st
         .child
-        .check_definition(DEFAULT_NODEJS_HOST_COMMAND, payload, st.config.child_timeout_ms)
+        .check_definition(
+            DEFAULT_NODEJS_HOST_COMMAND,
+            payload,
+            st.config.child_timeout_ms,
+        )
         .await
     {
         Ok(output) => {
@@ -234,7 +244,10 @@ async fn workflow_start(State(st): State<AppState>, headers: HeaderMap, body: By
         return json_response(StatusCode::BAD_REQUEST, ok_err("body-not-utf8"));
     };
     match st.engine.start_run_from_body(payload).await {
-        Ok(run) => json_response(StatusCode::CREATED, format!("{{\"ok\":true,\"run\":{run}}}")),
+        Ok(run) => json_response(
+            StatusCode::CREATED,
+            format!("{{\"ok\":true,\"run\":{run}}}"),
+        ),
         Err(err) => workflow_error_response(&err),
     }
 }
@@ -271,7 +284,11 @@ async fn workflow_cancel(
     }
 }
 
-async fn workflow_get(State(st): State<AppState>, Path(run_id): Path<String>, headers: HeaderMap) -> Response {
+async fn workflow_get(
+    State(st): State<AppState>,
+    Path(run_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(resp) = authorization_error(&st.config, &headers) {
         return resp;
     }

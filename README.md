@@ -91,15 +91,16 @@ CLI flag surface; never log them.
 
 ### flags-2-env
 
-CLI flags map to these env vars through the pinned
+Non-secret operational flags map to environment variables through the pinned
 [`flags-2-env`](https://github.com/ORESoftware/flags-2-env) parser
 (`vendor/flags-2-env` submodule, schema in `.cli-flags.toml`, audited in CI by
-`.github/workflows/cli-flags.yml`):
+`.github/workflows/cli-flags.yml`). Database, NATS, and authentication secrets
+remain environment-only so they cannot leak through process arguments:
 
 ```sh
 git submodule update --init --recursive
 make -C vendor/flags-2-env all
-scripts/with-flags2env.sh --port 8083 --nats-url nats://localhost:4222 -- \
+scripts/with-flags2env.sh --port 8083 --log-format json -- \
   ./target/release/fiducia-lambda-service
 ```
 
@@ -108,14 +109,8 @@ accepted only through environment variables, never command-line flags.
 
 ## Security
 
-- **Audit:** `cargo audit` is green (`cargo audit` exits 0). See
-  `.cargo/audit.toml` for four accepted `rustls-webpki` 0.102.8 advisories
-  (RUSTSEC-2026-0104 / 0098 / 0099 / 0049). They are reached only through
-  `async-nats v0.38.0` (which hard-pins `rustls-webpki ^0.102`); the fix requires
-  async-nats ≥ 0.49, a breaking major bump, so it is accepted with rationale
-  rather than forced. The residual webpki only verifies the trusted internal
-  NATS broker's TLS certificate. `rustls-pemfile` (RUSTSEC-2025-0134) is an
-  informational "unmaintained" warning, not a vulnerability.
+- **Audit:** `cargo audit` runs without advisory exceptions. NATS uses the
+  current `async-nats` TLS stack with `rustls-webpki` 0.103.x.
 - **Auth:** every mutating route requires one of `X-Server-Auth` /
   `X-Lambda-Runner-Auth` / `X-Agent-Auth` matching the configured secret; the
   guard is **fail-closed** — requests are rejected when the secret is

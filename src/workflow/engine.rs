@@ -69,12 +69,18 @@ impl WfMetrics {
             ("workflow_steps_retried_total", g(&self.steps_retried)),
             ("workflow_timers_started_total", g(&self.timers_started)),
             ("workflow_waits_started_total", g(&self.waits_started)),
-            ("workflow_signals_delivered_total", g(&self.signals_delivered)),
+            (
+                "workflow_signals_delivered_total",
+                g(&self.signals_delivered),
+            ),
             ("workflow_signals_consumed_total", g(&self.signals_consumed)),
             ("workflow_claims_total", g(&self.claims_total)),
             ("workflow_commit_conflicts_total", g(&self.commit_conflicts)),
             ("workflow_commit_errors_total", g(&self.commit_errors)),
-            ("workflow_worker_exceptions_total", g(&self.worker_exceptions)),
+            (
+                "workflow_worker_exceptions_total",
+                g(&self.worker_exceptions),
+            ),
         ];
         let mut out = String::from(
             "# HELP workflow_engine Workflow execution engine counters\n# TYPE workflow_runs_started_total counter\n",
@@ -146,7 +152,9 @@ impl Engine {
         tracing::info!(poll_ms, "workflow-engine enabled; polling");
         tokio::spawn(async move {
             loop {
-                engine.claim_and_dispatch(max_inflight, lease_ms, batch).await;
+                engine
+                    .claim_and_dispatch(max_inflight, lease_ms, batch)
+                    .await;
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(poll_ms)) => {}
                     _ = engine.wake.notified() => {}
@@ -158,7 +166,12 @@ impl Engine {
         // bound. Retains terminal runs for a window so clients can still read the
         // final state via GET /workflows/runs/{id}.
         let store = self.store.clone();
-        let retain_ms = env_int("WORKFLOW_RETAIN_TERMINAL_MS", 3_600_000, 60_000, 604_800_000);
+        let retain_ms = env_int(
+            "WORKFLOW_RETAIN_TERMINAL_MS",
+            3_600_000,
+            60_000,
+            604_800_000,
+        );
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(300)).await;
@@ -189,7 +202,10 @@ impl Engine {
         {
             obj.to_string()
         } else {
-            let r = first_present(&obj, &["definitionId", "definitionSlug", "definition", "slug"]);
+            let r = first_present(
+                &obj,
+                &["definitionId", "definitionSlug", "definition", "slug"],
+            );
             if r.is_empty() {
                 return Err("definitionId or definitionSlug is required".into());
             }
@@ -214,7 +230,8 @@ impl Engine {
         let run = self.store.create_run(&def_ref, &input, &idem).await?;
         WfMetrics::inc(&self.metrics.runs_started);
         self.nudge();
-        self.publish_event(json!({ "event": "run.started", "run": raw(&run) })).await;
+        self.publish_event(json!({ "event": "run.started", "run": raw(&run) }))
+            .await;
         Ok(run)
     }
 
@@ -241,7 +258,8 @@ impl Engine {
                 let nats = self.nats.clone();
                 let subject = self.config.workflow_event_subject.clone();
                 tokio::spawn(async move {
-                    nats.publish_event(&subject, &MessageEnvelope::new("run.canceled", ev)).await;
+                    nats.publish_event(&subject, &MessageEnvelope::new("run.canceled", ev))
+                        .await;
                 });
                 Ok(run)
             }
@@ -291,7 +309,9 @@ impl Engine {
             }
         };
 
-        let result = self.do_process_run(&run_id, &view, lease.fencing_token).await;
+        let result = self
+            .do_process_run(&run_id, &view, lease.fencing_token)
+            .await;
         if let Err(err) = result {
             WfMetrics::inc(&self.metrics.worker_exceptions);
             tracing::error!(run_id, %err, "workflow step crashed");
@@ -318,11 +338,20 @@ impl Engine {
         }
         let step = &steps[idx];
         match step_type(step).as_str() {
-            "activity" => self.run_activity(run_id, view, step, idx, total, fencing_token).await,
+            "activity" => {
+                self.run_activity(run_id, view, step, idx, total, fencing_token)
+                    .await
+            }
             "sleep" => self.run_sleep(run_id, view, step, idx),
             "waitSignal" => self.run_wait_signal(run_id, view, step, idx),
             other => {
-                self.terminal_failure(run_id, view, step, idx, &format!("unknown workflow step type: {other}"));
+                self.terminal_failure(
+                    run_id,
+                    view,
+                    step,
+                    idx,
+                    &format!("unknown workflow step type: {other}"),
+                );
             }
         }
         Ok(())
@@ -370,7 +399,10 @@ impl Engine {
             "fencingToken": fencing_token,
         })
         .to_string();
-        let timeout_ms = step.get("timeoutMs").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_ACTIVITY_TIMEOUT_MS);
+        let timeout_ms = step
+            .get("timeoutMs")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(DEFAULT_ACTIVITY_TIMEOUT_MS);
         let result = self
             .child
             .invoke(
@@ -383,8 +415,17 @@ impl Engine {
             .await;
         match result {
             Ok(output) => {
-                self.activity_success(run_id, view, step, idx, total, &function_ref, &step_input, &output)
-                    .await
+                self.activity_success(
+                    run_id,
+                    view,
+                    step,
+                    idx,
+                    total,
+                    &function_ref,
+                    &step_input,
+                    &output,
+                )
+                .await
             }
             Err(err) => {
                 self.activity_failure(run_id, view, step, idx, &function_ref, &step_input, &err)
@@ -407,7 +448,10 @@ impl Engine {
     ) {
         let name = step_name(step, idx);
         let output_value = decode_output(output);
-        let mut ctx = view.json["context"].as_object().cloned().unwrap_or_default();
+        let mut ctx = view.json["context"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         ctx.insert(name.clone(), output_value.clone());
         let ctx_json = Value::Object(ctx).to_string();
         if ctx_json.len() > MAX_CONTEXT_BYTES {
@@ -420,10 +464,26 @@ impl Engine {
             );
         }
         let attempt = view.json["attempt"].as_i64().unwrap_or(0);
-        let step_row = step_row(idx, &name, "activity", function_ref, attempt, "succeeded",
-            Some(step_input.clone()), Some(output_value.clone()), None, None);
+        let step_row = step_row(
+            idx,
+            &name,
+            "activity",
+            function_ref,
+            attempt,
+            "succeeded",
+            Some(step_input.clone()),
+            Some(output_value.clone()),
+            None,
+            None,
+        );
         if idx + 1 >= total {
-            let c = self.store.succeed_complete(run_id, view.version, Some(step_row), &output_value.to_string(), &ctx_json);
+            let c = self.store.succeed_complete(
+                run_id,
+                view.version,
+                Some(step_row),
+                &output_value.to_string(),
+                &ctx_json,
+            );
             let name2 = name.clone();
             self.handle_commit(c, run_id, |run| {
                 WfMetrics::inc(&self.metrics.steps_succeeded);
@@ -432,7 +492,9 @@ impl Engine {
             })
             .await;
         } else {
-            let c = self.store.succeed_advance(run_id, view.version, step_row, idx + 1, &ctx_json);
+            let c = self
+                .store
+                .succeed_advance(run_id, view.version, step_row, idx + 1, &ctx_json);
             let name2 = name.clone();
             let run_id2 = run_id.to_string();
             self.handle_commit(c, run_id, move |_run| {
@@ -444,6 +506,8 @@ impl Engine {
         }
     }
 
+    // Keeping the full activity attempt context explicit makes the retry and
+    // terminal-failure paths auditable at this state-machine boundary.
     #[allow(clippy::too_many_arguments)]
     async fn activity_failure(
         &self,
@@ -460,18 +524,31 @@ impl Engine {
         let new_attempt = attempt + 1;
         let retry = retry_config(&view.json, step);
         let max_attempts = max_attempts(&retry);
-        let step_row = step_row(idx, &name, "activity", function_ref, attempt, "failed",
-            Some(step_input.clone()), None, Some(error.to_string()), None);
+        let step_row = step_row(
+            idx,
+            &name,
+            "activity",
+            function_ref,
+            attempt,
+            "failed",
+            Some(step_input.clone()),
+            None,
+            Some(error.to_string()),
+            None,
+        );
         if new_attempt < max_attempts {
             let backoff = backoff_ms(&retry, attempt);
-            let c = self.store.fail_retry(run_id, view.version, step_row, new_attempt, backoff, error);
+            let c =
+                self.store
+                    .fail_retry(run_id, view.version, step_row, new_attempt, backoff, error);
             self.handle_commit(c, run_id, |_run| {
                 WfMetrics::inc(&self.metrics.steps_retried);
                 None
             })
             .await;
         } else {
-            self.terminal_failure_row(run_id, view.version, step_row, &name, error).await;
+            self.terminal_failure_row(run_id, view.version, step_row, &name, error)
+                .await;
         }
     }
 
@@ -479,23 +556,40 @@ impl Engine {
     fn run_sleep(&self, run_id: &str, view: &RunView, step: &Value, idx: usize) {
         let duration_ms = step.get("durationMs").and_then(|v| v.as_i64()).unwrap_or(0);
         let name = step_name(step, idx);
-        let step_row = step_row(idx, &name, "sleep", "", 0, "succeeded",
-            Some(json!({ "durationMs": duration_ms })), None, None, Some(0));
-        let c = self.store.enter_sleep(run_id, view.version, step_row, duration_ms, idx + 1);
+        let step_row = step_row(
+            idx,
+            &name,
+            "sleep",
+            "",
+            0,
+            "succeeded",
+            Some(json!({ "durationMs": duration_ms })),
+            None,
+            None,
+            Some(0),
+        );
+        let c = self
+            .store
+            .enter_sleep(run_id, view.version, step_row, duration_ms, idx + 1);
         let engine = self.clone();
         let run_id = run_id.to_string();
         tokio::spawn(async move {
-            engine.handle_commit(c, &run_id, |_r| {
-                WfMetrics::inc(&engine.metrics.timers_started);
-                None
-            })
-            .await;
+            engine
+                .handle_commit(c, &run_id, |_r| {
+                    WfMetrics::inc(&engine.metrics.timers_started);
+                    None
+                })
+                .await;
         });
     }
 
     // ── waitSignal ──
     fn run_wait_signal(&self, run_id: &str, view: &RunView, step: &Value, idx: usize) {
-        let signal_name = step.get("signalName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let signal_name = step
+            .get("signalName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let signals = view.json["signals"].as_array().cloned().unwrap_or_default();
         let name = step_name(step, idx);
         // find matching signal
@@ -509,18 +603,39 @@ impl Engine {
         let engine = self.clone();
         let run_id_s = run_id.to_string();
         if let Some((position, payload)) = matched {
-            let mut ctx = view.json["context"].as_object().cloned().unwrap_or_default();
+            let mut ctx = view.json["context"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
             ctx.insert(name.clone(), payload.clone());
             let ctx_json = Value::Object(ctx).to_string();
-            let step_row = step_row(idx, &name, "waitSignal", "", 0, "succeeded",
-                Some(json!({ "signalName": signal_name })), Some(payload), None, Some(0));
-            let c = self.store.consume_signal(run_id, view.version, step_row, idx + 1, &ctx_json, position);
+            let step_row = step_row(
+                idx,
+                &name,
+                "waitSignal",
+                "",
+                0,
+                "succeeded",
+                Some(json!({ "signalName": signal_name })),
+                Some(payload),
+                None,
+                Some(0),
+            );
+            let c = self.store.consume_signal(
+                run_id,
+                view.version,
+                step_row,
+                idx + 1,
+                &ctx_json,
+                position,
+            );
             tokio::spawn(async move {
-                engine.handle_commit(c, &run_id_s, |_r| {
-                    WfMetrics::inc(&engine.metrics.signals_consumed);
-                    None
-                })
-                .await;
+                engine
+                    .handle_commit(c, &run_id_s, |_r| {
+                        WfMetrics::inc(&engine.metrics.signals_consumed);
+                        None
+                    })
+                    .await;
                 engine.nudge();
             });
         } else {
@@ -530,7 +645,13 @@ impl Engine {
                 let now_ms = view.json["nowMs"].as_i64().unwrap_or(0);
                 match view.json["waitDeadlineMs"].as_i64() {
                     Some(deadline) if now_ms >= deadline => {
-                        self.terminal_failure(run_id, view, step, idx, &format!("signal wait timeout: {signal_name}"));
+                        self.terminal_failure(
+                            run_id,
+                            view,
+                            step,
+                            idx,
+                            &format!("signal wait timeout: {signal_name}"),
+                        );
                     }
                     _ => {
                         let c = self.store.repark_wait(run_id, view.version);
@@ -540,7 +661,11 @@ impl Engine {
                     }
                 }
             } else {
-                let deadline = match step.get("waitTimeoutMs").and_then(|v| v.as_i64()).unwrap_or(0) {
+                let deadline = match step
+                    .get("waitTimeoutMs")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                {
                     0 => None,
                     ms => Some(ms),
                 };
@@ -556,17 +681,37 @@ impl Engine {
     // ── failure helpers ──
     fn terminal_failure(&self, run_id: &str, view: &RunView, step: &Value, idx: usize, err: &str) {
         let name = step_name(step, idx);
-        let step_row = step_row(idx, &name, &step_type(step), "", 0, "failed", None, None, Some(err.to_string()), None);
+        let step_row = step_row(
+            idx,
+            &name,
+            &step_type(step),
+            "",
+            0,
+            "failed",
+            None,
+            None,
+            Some(err.to_string()),
+            None,
+        );
         let engine = self.clone();
         let run_id = run_id.to_string();
         let err = err.to_string();
         let version = view.version;
         tokio::spawn(async move {
-            engine.terminal_failure_row(&run_id, version, step_row, &name, &err).await;
+            engine
+                .terminal_failure_row(&run_id, version, step_row, &name, &err)
+                .await;
         });
     }
 
-    async fn terminal_failure_row(&self, run_id: &str, version: u64, step_row: Value, name: &str, err: &str) {
+    async fn terminal_failure_row(
+        &self,
+        run_id: &str,
+        version: u64,
+        step_row: Value,
+        name: &str,
+        err: &str,
+    ) {
         let c = self.store.fail_terminal(run_id, version, step_row, err);
         let name = name.to_string();
         let err = err.to_string();
@@ -605,9 +750,15 @@ impl Engine {
         if let Value::Object(ref mut m) = event {
             m.insert("ts".into(), json!(chrono::Utc::now().to_rfc3339()));
         }
-        let msg_type = event.get("event").and_then(|e| e.as_str()).unwrap_or("workflow.event").to_string();
+        let msg_type = event
+            .get("event")
+            .and_then(|e| e.as_str())
+            .unwrap_or("workflow.event")
+            .to_string();
         let envelope = MessageEnvelope::new(msg_type, event);
-        self.nats.publish_event(&self.config.workflow_event_subject, &envelope).await;
+        self.nats
+            .publish_event(&self.config.workflow_event_subject, &envelope)
+            .await;
     }
 }
 
@@ -696,14 +847,28 @@ fn retry_config(run: &Value, step: &Value) -> Value {
 }
 
 pub fn max_attempts(retry: &Value) -> i64 {
-    let n = retry.get("maxAttempts").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_MAX_ATTEMPTS);
+    let n = retry
+        .get("maxAttempts")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(DEFAULT_MAX_ATTEMPTS);
     n.clamp(1, MAX_ATTEMPTS_CAP)
 }
 
 pub fn backoff_ms(retry: &Value, attempt: i64) -> i64 {
-    let base = retry.get("backoffMs").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_BACKOFF_MS).max(0) as f64;
-    let factor = retry.get("backoffFactor").and_then(|v| v.as_f64()).unwrap_or(DEFAULT_BACKOFF_FACTOR).max(1.0);
-    let max_backoff = retry.get("maxBackoffMs").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_MAX_BACKOFF_MS);
+    let base = retry
+        .get("backoffMs")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(DEFAULT_BACKOFF_MS)
+        .max(0) as f64;
+    let factor = retry
+        .get("backoffFactor")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(DEFAULT_BACKOFF_FACTOR)
+        .max(1.0);
+    let max_backoff = retry
+        .get("maxBackoffMs")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(DEFAULT_MAX_BACKOFF_MS);
     let exp = attempt.min(64) as f64;
     let scaled = base * factor.powf(exp);
     max_backoff.min(scaled.min(1.0e15) as i64)

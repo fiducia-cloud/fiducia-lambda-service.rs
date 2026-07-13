@@ -34,11 +34,13 @@ impl Nats {
                 let url = self.url.clone()?;
                 match async_nats::connect(&url).await {
                     Ok(c) => {
-                        tracing::info!(%url, "connected to NATS");
+                        // NATS URLs may contain userinfo credentials; never emit
+                        // the configured URL or transport error text.
+                        tracing::info!("connected to NATS");
                         Some(c)
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, %url, "NATS connect failed; events will no-op");
+                    Err(_) => {
+                        tracing::warn!("NATS connect failed; events will no-op");
                         None
                     }
                 }

@@ -89,8 +89,15 @@ impl ChildRunner {
         let request = runtime::normalize_request_payload(payload);
         self.reap_idle().await;
         let def = crate::definition::load_function_definition(&self.config, identifier).await?;
-        self.invoke_loaded_definition(fallback_command, identifier, &def, &request, idle_ms, timeout_ms)
-            .await
+        self.invoke_loaded_definition(
+            fallback_command,
+            identifier,
+            &def,
+            &request,
+            idle_ms,
+            timeout_ms,
+        )
+        .await
     }
 
     /// `POST /check` — validate a definition by running a check-only invocation.
@@ -222,7 +229,8 @@ impl ChildRunner {
         let idle = runtime::idle_ms_from_definition(def, idle_ms);
         let timeout = runtime::timeout_ms_from_definition(def, timeout_ms);
         let payload = runtime::invocation_payload(identifier, def, request);
-        self.invoke_worker(&command, &key, &payload, idle, timeout).await
+        self.invoke_worker(&command, &key, &payload, idle, timeout)
+            .await
     }
 
     /// Ensure a warm worker for `reuse_key`, send it one invocation, and await a
@@ -438,7 +446,9 @@ async fn worker_driver(
             || stdin.write_all(b"\n").await.is_err()
             || stdin.flush().await.is_err()
         {
-            let _ = inv.reply.send(Err("failed to write to lambda child".into()));
+            let _ = inv
+                .reply
+                .send(Err("failed to write to lambda child".into()));
             break;
         }
         // Read exactly one line of result, bounded so a child cannot OOM us.

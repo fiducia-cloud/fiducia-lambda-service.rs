@@ -105,3 +105,9 @@ scripts/with-flags2env.sh --port 8083 --nats-url nats://localhost:4222 -- \
   bodies are size-limited (`LAMBDA_MAX_BODY_BYTES`) and parsed fallibly. Secrets
   are never written to logs. Child stdout is read through a `MAX_RESULT_BYTES`
   (1 MiB) bounded view before it is converted into the invocation result.
+- **Container identity:** the shipped image uses the audited
+  `tool-runner-nonroot` profile and runs as numeric uid/gid `65532:65532`.
+  Unlike the single-binary services it intentionally retains `psql` and
+  `/bin/sh`; direct local container execution should use a derived image with
+  the selected runner, while the default deployment dispatches through the
+  remote container pool.

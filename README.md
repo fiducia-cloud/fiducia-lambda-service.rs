@@ -107,6 +107,17 @@ scripts/with-flags2env.sh --port 8083 --log-format json -- \
 `LAMBDA_DATABASE_URL`, API-auth secrets, and the fiducia-node cluster secret are
 accepted only through environment variables, never command-line flags.
 
+## Reproducible build inputs
+
+CI and the container build consume immutable, verified sibling revisions:
+
+- `fiducia-clients` at `051b332843fb005006be0d564e98ba46b825785c`
+- `fiducia-interfaces` at `bbd8b52ce729ec34b0a9bff4dda6d0a448181797`
+
+The Dockerfile shallow-fetches those exact commits, verifies each detached
+`HEAD`, and compiles with `Cargo.lock`. Update both the CI checkout and matching
+Docker build argument together whenever either shared contract changes.
+
 ## Security
 
 - **Audit:** `cargo audit` runs without advisory exceptions. NATS uses the

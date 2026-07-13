@@ -1,5 +1,5 @@
 # Local direct-node stack. The build context is the fiducia.cloud directory so
-# the Dockerfile can copy sibling path dependencies.
+# the Dockerfile can copy this service while fetching verified sibling commits.
 services:
   lambda-service:
     build:

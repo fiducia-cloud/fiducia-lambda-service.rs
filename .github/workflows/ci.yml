@@ -13,27 +13,30 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           path: repo
           submodules: recursive
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-interfaces
+          ref: bbd8b52ce729ec34b0a9bff4dda6d0a448181797
           path: fiducia-interfaces
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           repository: fiducia-cloud/fiducia-clients
+          ref: 051b332843fb005006be0d564e98ba46b825785c
           path: fiducia-clients
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
+          toolchain: "1.95.0"
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: repo
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          tool: cargo-audit
+          tool: cargo-audit@0.21.2
       - name: Format
         working-directory: repo
         run: cargo fmt --all -- --check

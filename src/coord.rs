@@ -56,13 +56,7 @@ impl Coordinator {
         };
         let instance = self.instance_id.clone();
         let res = tokio::task::spawn_blocking(move || {
-            client.service_register(
-                "fiducia-lambda-service",
-                &instance,
-                "",
-                30_000,
-                None,
-            )
+            client.service_register("fiducia-lambda-service", &instance, "", 30_000, None)
         })
         .await;
         match res {
@@ -71,8 +65,12 @@ impl Coordinator {
                 // the wire shape ever drifts from fiducia-interfaces.
                 if let Some(inst) = v.get("instance").cloned() {
                     match serde_json::from_value::<types::ServiceInstance>(inst) {
-                        Ok(_) => tracing::info!(instance = %self.instance_id, "registered with fiducia-node"),
-                        Err(e) => tracing::warn!(error = %e, "service_register returned unexpected shape"),
+                        Ok(_) => {
+                            tracing::info!(instance = %self.instance_id, "registered with fiducia-node")
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "service_register returned unexpected shape")
+                        }
                     }
                 }
             }
@@ -94,7 +92,13 @@ impl Coordinator {
         let key = key.to_string();
         let holder = self.instance_id.clone();
         tokio::task::spawn_blocking(move || {
-            match client.idempotency_claim(&key, Some(&holder), Some(60_000), None, serde_json::Value::Null) {
+            match client.idempotency_claim(
+                &key,
+                Some(&holder),
+                Some(60_000),
+                None,
+                serde_json::Value::Null,
+            ) {
                 Ok(v) => {
                     // The contract reports whether this call created the claim.
                     let claimed = v
@@ -178,7 +182,12 @@ impl Coordinator {
         let Some(client) = self.inner.clone() else {
             return;
         };
-        let (key, lock_id, token) = (lease.key.clone(), lease.lock_id.clone(), lease.fencing_token);
-        let _ = tokio::task::spawn_blocking(move || client.lock_release(&key, &lock_id, token)).await;
+        let (key, lock_id, token) = (
+            lease.key.clone(),
+            lease.lock_id.clone(),
+            lease.fencing_token,
+        );
+        let _ =
+            tokio::task::spawn_blocking(move || client.lock_release(&key, &lock_id, token)).await;
     }
 }

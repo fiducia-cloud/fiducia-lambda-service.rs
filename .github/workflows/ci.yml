@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: repo
+          submodules: recursive
+      - uses: actions/checkout@v7
+        with:
+          repository: fiducia-cloud/fiducia-interfaces
+          path: fiducia-interfaces
+      - uses: actions/checkout@v7
+        with:
+          repository: fiducia-cloud/fiducia-clients
+          path: fiducia-clients
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: repo
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Format
+        working-directory: repo
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: repo
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Test
+        working-directory: repo
+        run: cargo test --all-features --locked
+      - name: Release build
+        working-directory: repo
+        run: cargo build --release --locked
+      - name: Dependency audit
+        working-directory: repo
+        run: cargo audit

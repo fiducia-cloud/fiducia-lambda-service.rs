@@ -34,7 +34,7 @@ parking_lot = "0.12"
 regex = "1"
 # NATS is the cross-service message bus (workflow events, container-pool
 # dispatch). An external NATS instance is assumed to exist.
-async-nats = "0.38"
+async-nats = { version = "0.49.1", default-features = false, features = ["jetstream", "ring"] }
 bytes = "1"
 
 # Shared, generated payload/error contract — the one source of truth for the

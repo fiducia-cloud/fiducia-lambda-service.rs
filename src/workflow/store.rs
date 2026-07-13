@@ -179,7 +179,8 @@ impl Store {
         if run.signals.len() >= MAX_PENDING_SIGNALS {
             return Err("workflow run has too many undelivered signals".into());
         }
-        run.signals.push(json!({ "name": name, "payload": payload }));
+        run.signals
+            .push(json!({ "name": name, "payload": payload }));
         run.next_run_at_ms = now_ms();
         run.lease_until_ms = 0; // make immediately claimable
         run.updated_at = now_ms();
@@ -218,7 +219,7 @@ impl Store {
             .values()
             .filter(|r| def_ref.is_empty() || r.definition_ref == def_ref)
             .collect();
-        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        items.sort_by_key(|run| std::cmp::Reverse(run.created_at));
         let limited: Vec<Value> = items
             .into_iter()
             .take(limit.max(0) as usize)
@@ -294,9 +295,7 @@ impl Store {
         match runs.get_mut(run_id) {
             None => Err(Commit::Err("workflow run not found".into())),
             Some(run) => {
-                if run.status == "canceled" {
-                    Err(Commit::Conflict(run_id.to_string()))
-                } else if run.version != expected_version {
+                if run.status == "canceled" || run.version != expected_version {
                     Err(Commit::Conflict(run_id.to_string()))
                 } else {
                     Ok(run)
@@ -489,8 +488,8 @@ impl Store {
     async fn resolve_definition(&self, def_ref: &str) -> Result<(Vec<Value>, Value), String> {
         let trimmed = def_ref.trim();
         if trimmed.starts_with('{') {
-            let obj: Value =
-                serde_json::from_str(trimmed).map_err(|e| format!("invalid inline definition: {e}"))?;
+            let obj: Value = serde_json::from_str(trimmed)
+                .map_err(|e| format!("invalid inline definition: {e}"))?;
             return Ok(extract_steps(&obj));
         }
         // Load from Postgres.
@@ -612,7 +611,10 @@ mod tests {
     #[tokio::test]
     async fn empty_definition_is_rejected() {
         let store = Store::new(cfg());
-        assert!(store.create_run(&inline(json!([])), "null", "").await.is_err());
+        assert!(store
+            .create_run(&inline(json!([])), "null", "")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -631,8 +633,7 @@ mod tests {
             Commit::Committed(_) => {}
             _ => panic!("advance should commit"),
         }
-        let after: Value =
-            serde_json::from_str(&store.get_run_with_steps(&id).unwrap()).unwrap();
+        let after: Value = serde_json::from_str(&store.get_run_with_steps(&id).unwrap()).unwrap();
         assert_eq!(after["run"]["currentStepIndex"], 1);
     }
 
@@ -657,10 +658,18 @@ mod tests {
     #[tokio::test]
     async fn cancel_then_commit_conflicts() {
         let store = Store::new(cfg());
-        let id = run_id(&store.create_run(&inline(json!([{"type":"sleep"}])), "null", "").await.unwrap());
+        let id = run_id(
+            &store
+                .create_run(&inline(json!([{"type":"sleep"}])), "null", "")
+                .await
+                .unwrap(),
+        );
         let version = store.claim_due(10, 60_000)[0].version;
         assert!(matches!(store.cancel_run(&id), Commit::Committed(_)));
-        assert!(matches!(store.cancel_run(&id), Commit::Conflict(_)), "double cancel");
+        assert!(
+            matches!(store.cancel_run(&id), Commit::Conflict(_)),
+            "double cancel"
+        );
         assert!(matches!(
             store.succeed_complete(&id, version, None, "{}", "{}"),
             Commit::Conflict(_)
@@ -670,7 +679,16 @@ mod tests {
     #[tokio::test]
     async fn signal_delivery_is_bounded() {
         let store = Store::new(cfg());
-        let id = run_id(&store.create_run(&inline(json!([{"type":"waitSignal","signalName":"go"}])), "null", "").await.unwrap());
+        let id = run_id(
+            &store
+                .create_run(
+                    &inline(json!([{"type":"waitSignal","signalName":"go"}])),
+                    "null",
+                    "",
+                )
+                .await
+                .unwrap(),
+        );
         for _ in 0..MAX_PENDING_SIGNALS {
             store.deliver_signal(&id, "\"go\"", "null").unwrap();
         }
@@ -692,8 +710,18 @@ mod tests {
     #[tokio::test]
     async fn gc_evicts_terminal_runs_only() {
         let store = Store::new(cfg());
-        let done = run_id(&store.create_run(&inline(json!([{"type":"sleep"}])), "null", "").await.unwrap());
-        let running = run_id(&store.create_run(&inline(json!([{"type":"sleep"}])), "null", "").await.unwrap());
+        let done = run_id(
+            &store
+                .create_run(&inline(json!([{"type":"sleep"}])), "null", "")
+                .await
+                .unwrap(),
+        );
+        let running = run_id(
+            &store
+                .create_run(&inline(json!([{"type":"sleep"}])), "null", "")
+                .await
+                .unwrap(),
+        );
         let v = store
             .claim_due(10, 60_000)
             .into_iter()
@@ -718,8 +746,7 @@ mod tests {
         for _ in 0..3 {
             store.create_run(&def, "null", "").await.unwrap();
         }
-        let listed: Value =
-            serde_json::from_str(&store.list_runs("", 2).unwrap()).unwrap();
+        let listed: Value = serde_json::from_str(&store.list_runs("", 2).unwrap()).unwrap();
         assert_eq!(listed.as_array().unwrap().len(), 2, "limit honored");
     }
 }

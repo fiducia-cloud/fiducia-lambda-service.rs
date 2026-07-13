@@ -9,6 +9,13 @@ columns = ["options", "env", "type", "description"]
 
 [parse]
 allow_unknown = false
+unknown_options_env = "FLAGS2ENV_UNKNOWN_OPTIONS"
+errors_env = "FLAGS2ENV_PARSE_ERRORS"
+
+# Database credentials, NATS userinfo, and server secrets stay environment-only
+# so they never appear in argv, process listings, shell history, or help output.
+[env]
+ignore = ["LAMBDA_DATABASE_URL", "NATS_URL", "LAMBDA_SERVER_AUTH_SECRET", "SERVER_AUTH_SECRET", "REMOTE_DEV_SERVER_SECRET"]
 
 [flags.host]
 env = "HOST"
@@ -27,18 +34,6 @@ env = "LAMBDA_MAX_BODY_BYTES"
 aliases = ["max-body-bytes"]
 type = "integer"
 help = "Max request body accepted on invoke/check/workflow endpoints (default 5242880)."
-
-[flags.database-url]
-env = "LAMBDA_DATABASE_URL"
-aliases = ["database-url"]
-type = "string"
-help = "Postgres URL used by psql to load function definitions (secret)."
-
-[flags.nats-url]
-env = "NATS_URL"
-aliases = ["nats-url"]
-type = "string"
-help = "NATS server URL. Absent → publisher/dispatcher no-op."
 
 [flags.workflow-event-subject]
 env = "NATS_WORKFLOW_EVENT_SUBJECT"
@@ -75,9 +70,3 @@ env = "LOG_FORMAT"
 aliases = ["log-format"]
 type = "string"
 help = "Set to 'json' for structured logs; anything else is human format."
-
-[flags.server-auth-secret]
-env = "LAMBDA_SERVER_AUTH_SECRET"
-aliases = ["server-auth-secret"]
-type = "string"
-help = "Shared secret enforced on mutating routes (secret). Also SERVER_AUTH_SECRET / REMOTE_DEV_SERVER_SECRET."

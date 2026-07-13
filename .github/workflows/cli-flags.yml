@@ -5,6 +5,7 @@ name: CLI flags
 on:
   pull_request:
     paths:
+      - ".github/workflows/cli-flags.yml"
       - ".cli-flags.toml"
       - ".gitmodules"
       - "vendor/flags-2-env"
@@ -12,6 +13,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/cli-flags.yml"
       - ".cli-flags.toml"
       - ".gitmodules"
       - "vendor/flags-2-env"
@@ -27,5 +29,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+      - run: make -B -C vendor/flags-2-env all
       - run: vendor/flags-2-env/build/flags2env audit .cli-flags.toml
-
+      - name: Launcher rejects unknown and invalid flags
+        run: |
+          scripts/with-flags2env.sh --port 9183 -- sh -c 'test "$PORT" = 9183'
+          if scripts/with-flags2env.sh --nats-url nats://forbidden.invalid -- true; then
+            echo "secret-shaped unknown flag was accepted" >&2
+            exit 1
+          fi
+          if scripts/with-flags2env.sh --port nope -- true; then
+            echo "invalid integer flag was accepted" >&2
+            exit 1
+          fi

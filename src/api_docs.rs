@@ -13,13 +13,33 @@ const ROUTES: &[(&str, &str, &str)] = &[
     ("GET", "/docs/api", "Human-readable API docs."),
     ("GET", "/api/docs", "Human-readable API docs."),
     ("GET", "/api/docs.json", "Machine-readable route metadata."),
-    ("POST", "/invoke/:function_id", "Invoke a stored function by id or slug."),
-    ("POST", "/check", "Validate a function definition (check-only run)."),
-    ("POST", "/destroy/:reuse_key", "Tear down a warm child worker."),
+    (
+        "POST",
+        "/invoke/:function_id",
+        "Invoke a stored function by id or slug.",
+    ),
+    (
+        "POST",
+        "/check",
+        "Validate a function definition (check-only run).",
+    ),
+    (
+        "POST",
+        "/destroy/:reuse_key",
+        "Tear down a warm child worker.",
+    ),
     ("POST", "/workflows/start", "Start a workflow run."),
     ("GET", "/workflows/runs", "List workflow runs."),
-    ("GET", "/workflows/runs/:run_id", "Get a run with its steps."),
-    ("POST", "/workflows/runs/:run_id/signal", "Deliver a signal to a run."),
+    (
+        "GET",
+        "/workflows/runs/:run_id",
+        "Get a run with its steps.",
+    ),
+    (
+        "POST",
+        "/workflows/runs/:run_id/signal",
+        "Deliver a signal to a run.",
+    ),
     ("POST", "/workflows/runs/:run_id/cancel", "Cancel a run."),
 ];
 

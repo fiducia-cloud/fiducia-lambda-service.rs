@@ -244,15 +244,42 @@ pub fn host_command(runtime: &str) -> Result<String, String> {
 
 fn default_container_image(runtime: &str) -> String {
     let (env, default) = match runtime {
-        "nodejs" => ("LAMBDA_NODEJS_CONTAINER_IMAGE", "docker.io/library/dd-lambda-nodejs-runtime:dev"),
-        "python3" => ("LAMBDA_PYTHON3_CONTAINER_IMAGE", "docker.io/library/dd-lambda-python3-runtime:dev"),
-        "ruby" => ("LAMBDA_RUBY_CONTAINER_IMAGE", "docker.io/library/dd-lambda-ruby-runtime:dev"),
-        "bash" => ("LAMBDA_BASH_CONTAINER_IMAGE", "docker.io/library/dd-lambda-bash-runtime:dev"),
-        "golang" => ("LAMBDA_GOLANG_CONTAINER_IMAGE", "docker.io/library/dd-lambda-golang-runtime:dev"),
-        "dart" => ("LAMBDA_DART_CONTAINER_IMAGE", "docker.io/library/dd-lambda-dart-runtime:dev"),
-        "erlang" => ("LAMBDA_ERLANG_CONTAINER_IMAGE", "docker.io/library/dd-lambda-erlang-runtime:dev"),
-        "elixir" => ("LAMBDA_ELIXIR_CONTAINER_IMAGE", "docker.io/library/dd-lambda-elixir-runtime:dev"),
-        "java" => ("LAMBDA_JAVA_CONTAINER_IMAGE", "docker.io/library/dd-lambda-java-runtime:dev"),
+        "nodejs" => (
+            "LAMBDA_NODEJS_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-nodejs-runtime:dev",
+        ),
+        "python3" => (
+            "LAMBDA_PYTHON3_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-python3-runtime:dev",
+        ),
+        "ruby" => (
+            "LAMBDA_RUBY_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-ruby-runtime:dev",
+        ),
+        "bash" => (
+            "LAMBDA_BASH_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-bash-runtime:dev",
+        ),
+        "golang" => (
+            "LAMBDA_GOLANG_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-golang-runtime:dev",
+        ),
+        "dart" => (
+            "LAMBDA_DART_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-dart-runtime:dev",
+        ),
+        "erlang" => (
+            "LAMBDA_ERLANG_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-erlang-runtime:dev",
+        ),
+        "elixir" => (
+            "LAMBDA_ELIXIR_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-elixir-runtime:dev",
+        ),
+        "java" => (
+            "LAMBDA_JAVA_CONTAINER_IMAGE",
+            "docker.io/library/dd-lambda-java-runtime:dev",
+        ),
         _ => return String::new(),
     };
     env_binary(env, default)
@@ -420,7 +447,9 @@ mod tests {
         assert!(!safe_reuse_key("bad key")); // space
         assert!(!safe_nats_subject("a.b c")); // whitespace
         assert!(!safe_nats_subject("a.*.b")); // wildcard not publishable
-        assert!(safe_nats_subject("dd.remote.container_pool.nodejs.requests"));
+        assert!(safe_nats_subject(
+            "dd.remote.container_pool.nodejs.requests"
+        ));
         assert!(!safe_container_image("img;rm -rf"));
         assert!(safe_container_image("docker.io/library/img:tag"));
     }

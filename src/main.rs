@@ -58,7 +58,9 @@ async fn main() -> anyhow::Result<()> {
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,fiducia_lambda_service=debug"));
-    let json = std::env::var("LOG_FORMAT").map(|v| v == "json").unwrap_or(false);
+    let json = std::env::var("LOG_FORMAT")
+        .map(|v| v == "json")
+        .unwrap_or(false);
     let builder = tracing_subscriber::fmt().with_env_filter(filter);
     if json {
         builder.json().init();

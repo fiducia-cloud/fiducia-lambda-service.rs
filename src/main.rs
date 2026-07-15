@@ -8,11 +8,10 @@ use fiducia_lambda_service::metrics::Metrics;
 use fiducia_lambda_service::nats::Nats;
 use fiducia_lambda_service::workflow::{Engine, Store};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing();
+    fiducia_telemetry::init("fiducia-lambda-service");
 
     let config = Config::from_env()?;
     let instance_id = uuid::Uuid::new_v4().to_string();
@@ -61,20 +60,6 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,fiducia_lambda_service=debug"));
-    let json = std::env::var("LOG_FORMAT")
-        .map(|v| v == "json")
-        .unwrap_or(false);
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    if json {
-        builder.json().init();
-    } else {
-        builder.init();
-    }
 }
 
 async fn shutdown_signal() {

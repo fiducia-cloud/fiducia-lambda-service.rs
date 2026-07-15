@@ -85,7 +85,7 @@ CLI flag surface; never log them.
 | `WORKFLOW_ENGINE_ENABLED` | string | enabled | Toggle the durable workflow scheduler |
 | `LAMBDA_CHILD_IDLE_MS` | integer | `300000` | Warm child idle-reap window |
 | `LAMBDA_CHILD_TIMEOUT_MS` | integer | `30000` | Hard per-invocation timeout |
-| `LOG_FORMAT` | string | human | `json` for structured logs |
+| `LOG_FORMAT` | string | json | Logging/tracing comes from the shared `fiducia-telemetry` crate: JSON by default, `LOG_FORMAT=text` for human-readable, OTLP via `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `LAMBDA_DATABASE_URL` | string (**secret**) | — | Postgres URL for definition loading (psql) |
 | `LAMBDA_SERVER_AUTH_SECRET` | string (**secret**) | — | Shared secret on mutating routes; also `SERVER_AUTH_SECRET` / `REMOTE_DEV_SERVER_SECRET` |
 

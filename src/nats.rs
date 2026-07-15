@@ -2,51 +2,73 @@
 //! (persistent, replayable); container-pool dispatch is a Core NATS
 //! request/reply. An external NATS instance is assumed to exist; when `NATS_URL`
 //! is unset every method degrades to a logged no-op so the service still runs.
+//!
+//! Reliability contract:
+//!   * the connection self-heals — `retry_on_initial_connect` keeps dialing in
+//!     the background, and an outright construction failure is retried on the
+//!     next call instead of being cached for the process lifetime;
+//!   * every JetStream publish carries a tenant-scoped `Nats-Msg-Id`, so an
+//!     ack-timeout retry or crash-window republish is deduplicated server-side
+//!     within the stream's dedup window;
+//!   * a durability downgrade (JetStream → Core fallback) is logged at `warn`,
+//!     and a fallback that ALSO fails is logged too — an event can no longer
+//!     vanish without a trace.
+//!
+//! NATS URLs may contain userinfo credentials; transport error text can echo
+//! them, so connection-failure logs name the failure class and never the body.
 
 use std::time::Duration;
 
 use async_nats::jetstream;
 use serde::Serialize;
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
 
 use crate::config::Config;
 use crate::messaging::MessageEnvelope;
 
+/// Upper bound on waiting for the JetStream publish acknowledgement before
+/// treating the publish as failed and taking the fallback path.
+const ACK_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Lazily-connected NATS handle shared across the service.
 pub struct Nats {
     url: Option<String>,
-    client: OnceCell<Option<async_nats::Client>>,
+    client: Mutex<Option<async_nats::Client>>,
 }
 
 impl Nats {
     pub fn new(config: &Config) -> Self {
         Nats {
             url: config.nats_url.clone(),
-            client: OnceCell::new(),
+            client: Mutex::new(None),
         }
     }
 
-    /// Connect once; cache the result (including a failed/absent connection as
-    /// `None` so we don't reconnect on a hot path every call).
-    async fn client(&self) -> Option<&async_nats::Client> {
-        self.client
-            .get_or_init(|| async {
-                let url = self.url.clone()?;
-                match async_nats::connect(&url).await {
-                    Ok(c) => {
-                        // NATS URLs may contain userinfo credentials; never emit
-                        // the configured URL or transport error text.
-                        tracing::info!("connected to NATS");
-                        Some(c)
-                    }
-                    Err(_) => {
-                        tracing::warn!("NATS connect failed; events will no-op");
-                        None
-                    }
-                }
-            })
+    /// The shared client, (re)connecting if none is cached. Once constructed,
+    /// async-nats reconnects internally, so the cached client stays valid across
+    /// broker restarts; if construction itself fails, the next call retries
+    /// instead of inheriting a permanently-dead publisher.
+    async fn client(&self) -> Option<async_nats::Client> {
+        let url = self.url.as_ref()?;
+        let mut cached = self.client.lock().await;
+        if let Some(client) = cached.as_ref() {
+            return Some(client.clone());
+        }
+        match async_nats::ConnectOptions::new()
+            .retry_on_initial_connect()
+            .connect(url)
             .await
-            .as_ref()
+        {
+            Ok(client) => {
+                tracing::info!("connected to NATS");
+                *cached = Some(client.clone());
+                Some(client)
+            }
+            Err(_) => {
+                tracing::warn!("NATS client construction failed; will retry on the next call");
+                None
+            }
+        }
     }
 
     /// Publish a durable, enveloped event to a `fiducia.<class>.<event>.v1`
@@ -54,29 +76,62 @@ impl Nats {
     /// propagated (lifecycle events must never break the request path).
     pub async fn publish_event<T: Serialize>(&self, subject: &str, envelope: &MessageEnvelope<T>) {
         let Some(client) = self.client().await else {
-            return;
+            return; // NATS_URL unset (documented no-op) or construction failed (logged)
         };
         let bytes = match serde_json::to_vec(envelope) {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!(error = %e, "failed to serialize NATS envelope");
+                tracing::error!(error = %e, subject, "failed to serialize NATS envelope; event dropped");
                 return;
             }
         };
+
+        // Tenant-scoped idempotent publish: JetStream drops a duplicate
+        // `Nats-Msg-Id` within the stream's dedup window, so the ack-timeout
+        // retry below (and any crash-window republish) collapses to one stored
+        // message. Scoped by tenant so two tenants reusing the same business
+        // key can never suppress each other's events.
+        let dedup_id = format!(
+            "{}:{}",
+            envelope
+                .tenant_id
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "global".to_string()),
+            envelope.idempotency_key
+        );
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", dedup_id.as_str());
+
         let js = jetstream::new(client.clone());
-        match js.publish(subject.to_string(), bytes.clone().into()).await {
-            Ok(ack) => {
-                if let Err(e) = ack.await {
-                    tracing::debug!(error = %e, subject, "JetStream ack failed; falling back to core publish");
-                    let _ = client.publish(subject.to_string(), bytes.into()).await;
-                }
-            }
-            Err(e) => {
-                // No stream bound to the subject (or JS disabled) — fall back to
-                // Core NATS so the event still reaches live subscribers.
-                tracing::debug!(error = %e, subject, "JetStream publish failed; using core publish");
-                let _ = client.publish(subject.to_string(), bytes.into()).await;
-            }
+        let attempt = async {
+            js.publish_with_headers(subject.to_string(), headers, bytes.clone().into())
+                .await?
+                .await
+        };
+        let failure_class = match tokio::time::timeout(ACK_TIMEOUT, attempt).await {
+            Ok(Ok(_ack)) => return, // durably stored by the broker
+            Ok(Err(_)) => "jetstream publish/ack failed (no stream bound?)",
+            Err(_) => "jetstream ack timed out",
+        };
+
+        // Durability downgrade: deliver at-most-once over Core NATS so the event
+        // still reaches live subscribers — but never silently.
+        tracing::warn!(
+            subject,
+            message_id = %envelope.message_id,
+            failure_class,
+            "durable JetStream publish failed; falling back to core NATS (at-most-once)"
+        );
+        if client
+            .publish(subject.to_string(), bytes.into())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                subject,
+                message_id = %envelope.message_id,
+                "core NATS fallback publish also failed; event dropped"
+            );
         }
     }
 

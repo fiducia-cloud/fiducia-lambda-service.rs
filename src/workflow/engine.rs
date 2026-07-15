@@ -257,9 +257,11 @@ impl Engine {
                 let ev = json!({ "event": "run.canceled", "runId": run_id });
                 let nats = self.nats.clone();
                 let subject = self.config.workflow_event_subject.clone();
+                let idempotency_key = format!("workflow:{run_id}:run.canceled");
                 tokio::spawn(async move {
-                    nats.publish_event(&subject, &MessageEnvelope::new("run.canceled", ev))
-                        .await;
+                    let envelope = MessageEnvelope::new("run.canceled", ev, idempotency_key)
+                        .with_source("fiducia-lambda-service");
+                    nats.publish_event(&subject, &envelope).await;
                 });
                 Ok(run)
             }
@@ -755,7 +757,12 @@ impl Engine {
             .and_then(|e| e.as_str())
             .unwrap_or("workflow.event")
             .to_string();
-        let envelope = MessageEnvelope::new(msg_type, event);
+        // Preserve the previous one-message/one-key behavior for events that do
+        // not yet expose a domain transition id, while still using the standard
+        // envelope and JetStream dedup header.
+        let idempotency_key = format!("workflow-event:{}", uuid::Uuid::new_v4());
+        let envelope = MessageEnvelope::new(msg_type, event, idempotency_key)
+            .with_source("fiducia-lambda-service");
         self.nats
             .publish_event(&self.config.workflow_event_subject, &envelope)
             .await;

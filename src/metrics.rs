@@ -30,6 +30,14 @@ counters! {
     child_stdio_bytes_total,
     pool_dispatch_total,
     pool_dispatch_failures_total,
+    nats_connect_attempts_total,
+    nats_connect_failures_total,
+    nats_event_published_total,
+    nats_core_fallback_total,
+    nats_publish_failures_total,
+    nats_serialization_failures_total,
+    nats_unconfigured_skips_total,
+    nats_unavailable_drops_total,
 }
 
 fn g(a: &AtomicU64) -> u64 {
@@ -109,6 +117,62 @@ impl Metrics {
             "Container-pool dispatches that failed (before any local fallback).",
             "counter",
             g(&self.pool_dispatch_failures_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_connect_attempts_total",
+            "Initial NATS connection attempts, including bounded retries.",
+            "counter",
+            g(&self.nats_connect_attempts_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_connect_failures_total",
+            "Failed initial NATS connection attempts.",
+            "counter",
+            g(&self.nats_connect_failures_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_event_published_total",
+            "Lifecycle events acknowledged by JetStream.",
+            "counter",
+            g(&self.nats_event_published_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_core_fallback_total",
+            "Lifecycle events accepted by Core NATS after a JetStream failure.",
+            "counter",
+            g(&self.nats_core_fallback_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_publish_failures_total",
+            "NATS lifecycle events that failed after fallback.",
+            "counter",
+            g(&self.nats_publish_failures_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_serialization_failures_total",
+            "Invalid lifecycle envelopes refused before NATS publish.",
+            "counter",
+            g(&self.nats_serialization_failures_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_unconfigured_skips_total",
+            "NATS publishes intentionally skipped because NATS is not configured.",
+            "counter",
+            g(&self.nats_unconfigured_skips_total),
+        );
+        block(
+            &mut out,
+            "dd_lambda_runner_nats_unavailable_drops_total",
+            "NATS publishes dropped while the configured broker was unavailable.",
+            "counter",
+            g(&self.nats_unavailable_drops_total),
         );
         block(
             &mut out,

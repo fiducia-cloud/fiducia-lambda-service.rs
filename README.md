@@ -19,10 +19,11 @@ Two subsystems share one process:
 
 | Concern | Mechanism |
 | --- | --- |
-| Messaging | **NATS** — JetStream for durable workflow lifecycle events, Core NATS request/reply for container-pool dispatch |
+| Messaging | `fiducia-messaging` envelope; **NATS** JetStream with `Nats-Msg-Id` dedup for lifecycle events, Core request/reply for container-pool dispatch |
 | Coordination (optional) | **fiducia-node** via an authenticated, tenant-scoped `fiducia-client` — run leases + fencing tokens, idempotency claims, service registration |
 | Function definitions | **Postgres** via `psql` (`LAMBDA_DATABASE_URL`) |
 | Shared types | `fiducia-interfaces` |
+| Telemetry | `fiducia-telemetry` structured logs + optional OTLP traces; Prometheus counters at `/metrics` |
 
 fiducia-node is optional only as an explicit single-process mode: with neither
 `FIDUCIA_NODE_URL` nor legacy `FIDUCIA_BASE_URL`, the engine uses local synthetic
@@ -76,7 +77,7 @@ CLI flag surface; never log them.
 | `HOST` | string | `0.0.0.0` | Bind address |
 | `PORT` | integer | `8083` | HTTP port |
 | `LAMBDA_MAX_BODY_BYTES` | integer | `5242880` | Max invoke/check/workflow body |
-| `NATS_URL` | string | — | NATS server; absent → publisher/dispatcher no-op |
+| `NATS_URL` | string | — | NATS server; absent → publisher/dispatcher no-op; initial failures retry every five seconds |
 | `NATS_WORKFLOW_EVENT_SUBJECT` | string | `dd.remote.workflows.events` | Workflow lifecycle event subject |
 | `FIDUCIA_NODE_URL` / `FIDUCIA_BASE_URL` | string | — | Optional direct fiducia-node endpoint; `FIDUCIA_BASE_URL` is a compatibility alias |
 | `FIDUCIA_NODE_INTERNAL_SECRET` / `FIDUCIA_INTERNAL_SECRET` | string (**secret**) | — | Required internal-hop secret whenever a node URL is configured; environment-only |
@@ -85,7 +86,8 @@ CLI flag surface; never log them.
 | `WORKFLOW_ENGINE_ENABLED` | string | enabled | Toggle the durable workflow scheduler |
 | `LAMBDA_CHILD_IDLE_MS` | integer | `300000` | Warm child idle-reap window |
 | `LAMBDA_CHILD_TIMEOUT_MS` | integer | `30000` | Hard per-invocation timeout |
-| `LOG_FORMAT` | string | human | `json` for structured logs |
+| `FIDUCIA_LOG_FORMAT` | string | `json` | `text` for compact local logs; `OTEL_LOG_FORMAT` then legacy `LOG_FORMAT` are fallbacks |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | string | — | Optional local collector OTLP gRPC endpoint; exporter failure falls back to stdout |
 | `LAMBDA_DATABASE_URL` | string (**secret**) | — | Postgres URL for definition loading (psql) |
 | `LAMBDA_SERVER_AUTH_SECRET` | string (**secret**) | — | Shared secret on mutating routes; also `SERVER_AUTH_SECRET` / `REMOTE_DEV_SERVER_SECRET` |
 
@@ -113,10 +115,12 @@ CI and the container build consume immutable, verified sibling revisions:
 
 - `fiducia-clients` at `bcf2f868697a96d82151c0e4bf0efae258b234e9`
 - `fiducia-interfaces` at `487e470c45ab5851e8f6f3b1dc048fe067fbf408`
+- `fiducia-messaging.rs` at `416df78b2ca6132990150572933f3908728b2aab`
+- `fiducia-telemetry.rs` at `b5663ee10367b5dfeac74d44922615226c75b7b2`
 
 The Dockerfile shallow-fetches those exact commits, verifies each detached
 `HEAD`, and compiles with `Cargo.lock`. Update both the CI checkout and matching
-Docker build argument together whenever either shared contract changes.
+Docker build argument together whenever a shared dependency changes.
 
 ## Security
 
@@ -141,3 +145,8 @@ Docker build argument together whenever either shared contract changes.
   `/bin/sh`; direct local container execution should use a derived image with
   the selected runner, while the default deployment dispatches through the
   remote container pool.
+- **Visible delivery degradation:** the standard message envelope supplies the
+  producer identity and idempotency key, JetStream publishes carry a dedup
+  header, and reconnect, serialization, fallback, and final publish outcomes are
+  exposed as structured logs and Prometheus counters. These delivery paths never
+  replace fiducia-node leases or the durable workflow store.

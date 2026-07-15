@@ -27,9 +27,19 @@ jobs:
           repository: fiducia-cloud/fiducia-clients
           ref: bcf2f868697a96d82151c0e4bf0efae258b234e9
           path: fiducia-clients
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: fiducia-cloud/fiducia-messaging.rs
+          ref: 416df78b2ca6132990150572933f3908728b2aab
+          path: fiducia-messaging.rs
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: fiducia-cloud/fiducia-telemetry.rs
+          ref: b5663ee10367b5dfeac74d44922615226c75b7b2
+          path: fiducia-telemetry.rs
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: "1.95.0"
+          toolchain: "1.97.0"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:

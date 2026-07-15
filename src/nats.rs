@@ -163,3 +163,44 @@ impl Nats {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[tokio::test]
+    async fn unconfigured_nats_is_observable_and_pool_dispatch_is_explicit() {
+        let metrics = Arc::new(Metrics::default());
+        let nats = Nats {
+            url: None,
+            connection: Mutex::new(ConnectionState::default()),
+            metrics: metrics.clone(),
+        };
+        let envelope = MessageEnvelope::new(
+            "workflow.completed",
+            serde_json::json!({ "workflow_id": "wf-1" }),
+            "workflow:wf-1:completed",
+        );
+
+        nats.publish_event("fiducia.workflows.completed.v1", &envelope)
+            .await;
+        let error = nats
+            .pool_dispatch("pool.invoke", "js", "fn-1", "{}", 5)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, "NATS is not configured");
+        assert_eq!(
+            metrics
+                .nats_unconfigured_skips_total
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            metrics.nats_connect_attempts_total.load(Ordering::Relaxed),
+            0,
+            "an intentionally absent broker must not cause reconnect churn"
+        );
+    }
+}

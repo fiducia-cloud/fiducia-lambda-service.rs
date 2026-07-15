@@ -1,5 +1,6 @@
-# GitHub automation
+# .github
 
-CI and dependency automation for the lambda/workflow service. Preserve locked
-builds, immutable action references, workflow-state tests, shared messaging
-contracts, and non-root runtime validation.
+GitHub Actions for `fiducia-lambda-service.rs` — CI (fmt, clippy `-D warnings`, locked tests,
+`cargo audit`) plus the repo's deploy/docker/flags workflows where present.
+Workflow actions are pinned to full commit SHAs per the fleet's
+reproducible-build policy (audited by the monorepo's `audit-repo-state.sh`).

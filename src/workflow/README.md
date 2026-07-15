@@ -1,6 +1,7 @@
-# Durable workflow engine
+# workflow
 
-The workflow store is the durable source of truth; the engine claims work,
-advances one state-machine transition, and publishes lifecycle notifications.
-NATS events must follow a committed transition and use the standard envelope.
-Cross-replica execution requires fiducia-node leases, fencing, and idempotency.
+The workflow engine: run lifecycle (create → step → complete/cancel/fail),
+durable run/signal storage, and the event emission points that publish
+`dd.remote.workflows.events`. The store bounds signal delivery (see
+`signal_delivery_is_bounded`); engine state transitions are the unit-tested
+core.

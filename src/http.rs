@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(|| async { Redirect::temporary("/home") }))
         .route("/home", get(home))
         .route("/healthz", get(healthz))
+        .route("/readyz", get(healthz))
         .route("/metrics", get(metrics))
         .route("/docs/api", get(api_docs::html))
         .route("/api/docs", get(api_docs::html))
@@ -45,6 +46,10 @@ pub fn router(state: AppState) -> Router {
         // Enforce the configured max body on every route, so a large POST is
         // rejected before it is buffered into memory (DoS guard).
         .layer(DefaultBodyLimit::max(state.config.max_body_bytes))
+        // Fleet convention: hardening layers last — catch-panic outermost so a
+        // panicking handler becomes a 500 instead of a dropped connection.
+        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
         .with_state(state)
 }
 

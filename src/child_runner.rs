@@ -519,6 +519,53 @@ where
 mod tests {
     use super::*;
 
+    /// The pool→local degradation GATE: with `LAMBDA_POOL_FALLBACK_LOCAL=0` a
+    /// pool failure must surface the caller-facing reason and count a dispatch
+    /// failure — never silently invoke locally against operator intent. (The
+    /// enabled path spawns real worker processes; the gate is the decision
+    /// point worth pinning, and the failure reasons themselves are covered by
+    /// the nats.rs tests.)
+    #[tokio::test]
+    async fn pool_failure_with_fallback_disabled_surfaces_the_reason() {
+        std::env::set_var("LAMBDA_POOL_FALLBACK_LOCAL", "0");
+        let metrics = Arc::new(Metrics::default());
+        let config = Config::from_env().expect("bare-env config");
+        let nats = Arc::new(Nats::new(&config, metrics.clone()));
+        let runner = ChildRunner::new(config, metrics.clone(), nats);
+
+        let result = runner
+            .dispatch_via_pool(
+                "dd.remote.container_pool.js.requests",
+                "js",
+                "node",
+                "fn-under-test",
+                r#"{"runtime":"js"}"#,
+                "{}",
+                1_000,
+                1_000,
+            )
+            .await;
+        std::env::remove_var("LAMBDA_POOL_FALLBACK_LOCAL");
+
+        assert_eq!(
+            result.expect_err("must fail without NATS and without fallback"),
+            "NATS is not configured"
+        );
+        assert_eq!(
+            metrics
+                .pool_dispatch_failures_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the refusal must be counted"
+        );
+        assert_eq!(
+            metrics
+                .pool_dispatch_total
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn capped_line_reads_a_normal_line() {
         let data = b"hello world\nleftover";

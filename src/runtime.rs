@@ -42,6 +42,8 @@ pub fn csv_env(name: &str, default: &str) -> Vec<String> {
 pub fn canonical_runtime(runtime: &str) -> String {
     match runtime {
         "javascript" | "typescript" | "node" | "nodejs" => "nodejs",
+        "browser-playwright" | "playwright" => "playwright",
+        "browser-puppeteer" | "puppeteer" => "puppeteer",
         "python" | "python3" => "python3",
         "shell" | "bash" => "bash",
         "ruby" => "ruby",
@@ -59,7 +61,17 @@ pub fn canonical_runtime(runtime: &str) -> String {
 pub fn supported_runtime(runtime: &str) -> bool {
     matches!(
         runtime,
-        "nodejs" | "python3" | "ruby" | "bash" | "golang" | "dart" | "erlang" | "elixir" | "java"
+        "nodejs"
+            | "playwright"
+            | "puppeteer"
+            | "python3"
+            | "ruby"
+            | "bash"
+            | "golang"
+            | "dart"
+            | "erlang"
+            | "elixir"
+            | "java"
     )
 }
 
@@ -217,7 +229,7 @@ fn shell_word(v: &str) -> String {
 }
 
 fn host_runtime_allowed(runtime: &str) -> bool {
-    csv_env("LAMBDA_ALLOW_HOST_RUNTIMES", "nodejs")
+    csv_env("LAMBDA_ALLOW_HOST_RUNTIMES", "nodejs,playwright,puppeteer")
         .iter()
         .any(|r| r == runtime)
 }
@@ -225,6 +237,10 @@ fn host_runtime_allowed(runtime: &str) -> bool {
 pub fn host_command(runtime: &str) -> Result<String, String> {
     let (env, default): (&str, &str) = match runtime {
         "nodejs" => ("LAMBDA_NODEJS_HOST_COMMAND", crate::config::DEFAULT_NODEJS_HOST_COMMAND),
+        "playwright" | "puppeteer" => (
+            "LAMBDA_BROWSER_HOST_COMMAND",
+            crate::config::DEFAULT_BROWSER_HOST_COMMAND,
+        ),
         "python3" => (
             "LAMBDA_PYTHON3_HOST_COMMAND",
             "env -i PATH=\"$PATH\" PYTHONUNBUFFERED=1 python3 child-runtimes/python-function-runner.py",
@@ -418,6 +434,8 @@ mod tests {
         for a in ["javascript", "typescript", "node", "nodejs", ""] {
             assert_eq!(canonical_runtime(a), "nodejs", "alias {a}");
         }
+        assert_eq!(canonical_runtime("browser-playwright"), "playwright");
+        assert_eq!(canonical_runtime("browser-puppeteer"), "puppeteer");
         assert_eq!(canonical_runtime("python"), "python3");
         assert_eq!(canonical_runtime("go"), "golang");
         assert_eq!(canonical_runtime("rust"), "rust", "unknown passes through");
@@ -461,6 +479,8 @@ mod tests {
     #[test]
     fn supported_runtime_gate() {
         assert!(supported_runtime("nodejs"));
+        assert!(supported_runtime("playwright"));
+        assert!(supported_runtime("puppeteer"));
         assert!(supported_runtime("java"));
         assert!(!supported_runtime("cobol"));
     }

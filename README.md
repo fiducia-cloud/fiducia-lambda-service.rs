@@ -5,8 +5,9 @@ Gleam/Erlang `gleam-lambda-runner`.
 
 Two subsystems share one process:
 
-- **Child runner** — runs stored functions (nodejs / python3 / ruby / bash /
-  containerized runtimes) in **reusable, sandboxed child processes**. Warm
+- **Child runner** — runs stored functions (nodejs / Playwright / Puppeteer /
+  python3 / ruby / bash / containerized runtimes) in **reusable, sandboxed
+  child processes**. Warm
   workers are keyed by reuse key, reaped when idle, and can be dispatched to
   `dd-container-pool` over NATS instead of running locally. Each local child
   returns one newline-framed stdout result capped at 1 MiB (including the
@@ -86,6 +87,9 @@ CLI flag surface; never log them.
 | `WORKFLOW_ENGINE_ENABLED` | string | enabled | Toggle the durable workflow scheduler |
 | `LAMBDA_CHILD_IDLE_MS` | integer | `300000` | Warm child idle-reap window |
 | `LAMBDA_CHILD_TIMEOUT_MS` | integer | `30000` | Hard per-invocation timeout |
+| `LAMBDA_ALLOW_HOST_RUNTIMES` | CSV | `nodejs,playwright,puppeteer` | Runtimes permitted to execute in the host child pool; other runtimes require container-pool dispatch |
+| `LAMBDA_BROWSER_ALLOW_PRIVATE_NETWORKS` | boolean | `false` | Explicit operator override for browser access to local/private targets; keep disabled outside owned test networks |
+| `LAMBDA_BROWSER_ALLOWED_HOSTS` | CSV | — | Exact private/local hostnames explicitly authorized for browser access |
 | `FIDUCIA_LOG_FORMAT` | string | `json` | Logging/tracing comes from the shared `fiducia-telemetry` crate; `text` for compact local logs (`OTEL_LOG_FORMAT` then legacy `LOG_FORMAT` are fallbacks) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | string | — | Optional local collector OTLP gRPC endpoint; exporter failure falls back to stdout |
 | `LAMBDA_DATABASE_URL` | string (**secret**) | — | Postgres URL for definition loading (psql) |
@@ -113,16 +117,38 @@ accepted only through environment variables, never command-line flags.
 
 CI and the container build consume immutable, verified sibling revisions:
 
-- `fiducia-clients` at `bcf2f868697a96d82151c0e4bf0efae258b234e9`
-- `fiducia-interfaces` at `487e470c45ab5851e8f6f3b1dc048fe067fbf408`
-- `fiducia-messaging.rs` at `416df78b2ca6132990150572933f3908728b2aab`
-- `fiducia-telemetry.rs` at `b5663ee10367b5dfeac74d44922615226c75b7b2`
+- `fiducia-clients` at `1446b254b4bfd57b2df75c3c451a663313f19eb9`
+- `fiducia-interfaces` at `3072e824e4e10f4a392a5851ea155ab5693ff206`
+- `fiducia-messaging.rs` at `cec4ea4f54162758858c6c284324c34a42f3f3d7`
+- `fiducia-telemetry.rs` at `724844e62ba35f409917d72343e7804c199878a9`
 
 The Dockerfile shallow-fetches those exact commits, verifies each detached
 `HEAD`, and compiles with `Cargo.lock`. Update both the CI checkout and matching
 Docker build argument together whenever a shared dependency changes.
 
 ## Security
+
+### Browser automation and ethical scraping
+
+Playwright and Puppeteer browser automation is a normal, safe, and ethical
+engineering capability when it is used on resources you own or are authorized
+to access, within published terms and rate limits. This project policy does not
+grant permission to scrape a third-party service and is not legal advice.
+
+Prefer a documented API when it provides the needed data. For authorized
+browser work, identify and rate-limit the client when appropriate, cache and
+minimize collection, and follow the site's terms and applicable `robots.txt`
+guidance. Do not bypass authentication, paywalls, CAPTCHAs, or other access
+controls, and do not collect credentials or unnecessary personal/sensitive
+data. The browser child blocks local/private targets by default, rejects URL
+credentials, isolates each invocation in a new browser context, closes that
+context after use, and receives no database, auth, NATS, or OTLP secrets.
+
+Use runtime `playwright` or `puppeteer`; the function body receives `request`,
+`context`, `page`, `browser`, and a stderr-only `console`. Both engines use the
+same image-pinned Chromium build. Compile-only checks avoid launching a browser,
+while normal invocations reuse the warm browser process and isolate page state
+per invocation.
 
 - **Audit:** `cargo audit` runs without advisory exceptions. NATS uses the
   current `async-nats` TLS stack with `rustls-webpki` 0.103.x.

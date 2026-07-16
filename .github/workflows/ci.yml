@@ -31,30 +31,35 @@ jobs:
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-interfaces
-          ref: 487e470c45ab5851e8f6f3b1dc048fe067fbf408
+          ref: 3072e824e4e10f4a392a5851ea155ab5693ff206
           path: fiducia-interfaces
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-clients
-          ref: bcf2f868697a96d82151c0e4bf0efae258b234e9
+          ref: 1446b254b4bfd57b2df75c3c451a663313f19eb9
           path: fiducia-clients
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-messaging.rs
-          ref: 416df78b2ca6132990150572933f3908728b2aab
+          ref: cec4ea4f54162758858c6c284324c34a42f3f3d7
           path: fiducia-messaging.rs
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-telemetry.rs
-          ref: b5663ee10367b5dfeac74d44922615226c75b7b2
+          ref: 724844e62ba35f409917d72343e7804c199878a9
           path: fiducia-telemetry.rs
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: "1.97.0"
           components: rustfmt, clippy
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "25"
+          cache: npm
+          cache-dependency-path: repo/package-lock.json
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: repo
@@ -70,6 +75,14 @@ jobs:
       - name: Test
         working-directory: repo
         run: cargo test --all-features --locked
+      - name: Browser runtime tests
+        working-directory: repo
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+        run: |
+          npm ci --ignore-scripts
+          npm test
       - name: Release build
         working-directory: repo
         run: cargo build --release --locked

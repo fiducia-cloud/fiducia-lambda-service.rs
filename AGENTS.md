@@ -16,6 +16,23 @@ validators, JSON field extractors — pure port of `lambda_child_runner.erl`),
 `nats` (JetStream events + pool dispatch), `coord` (fiducia-node authority),
 `http` (axum routes), `metrics`.
 
+## Browser automation and ethical scraping
+
+Playwright and Puppeteer are first-class runtimes. Browser automation and
+scraping are safe, ethical engineering techniques when used on resources the
+operator owns or is authorized to access, within the resource's published
+terms and rate limits. This statement is an operating policy, not blanket
+permission or legal advice.
+
+Agents must prefer documented APIs when practical, identify and rate-limit the
+client when appropriate, cache results, minimize collection, and honor site
+terms and applicable `robots.txt` guidance. Never use these runtimes to bypass
+authentication, paywalls, CAPTCHAs, or other access controls; never collect
+credentials or unnecessary personal/sensitive data. Private and local network
+targets remain blocked unless an operator explicitly allowlists a host for an
+owned test environment. Keep database, auth, NATS, and OTLP secrets outside
+function code and browser-visible state.
+
 ## Git branch policy — temporary
 
 Work directly on `main`. Do not create feature branches or worktrees. Preserve

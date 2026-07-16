@@ -153,6 +153,12 @@ fn validate_node_coordination(
 /// Byte-for-byte the `default_command` constant from `http_server.gleam`.
 pub const DEFAULT_NODEJS_HOST_COMMAND: &str = "env -i PATH=\"$PATH\" NODE_ENV=production NODE_NO_WARNINGS=1 NATS_URL=\"${NATS_URL:-}\" CONTAINER_POOL_NATS_URL=\"${CONTAINER_POOL_NATS_URL:-}\" CONTAINER_POOL_NATS_SUBJECT_PREFIX=\"${CONTAINER_POOL_NATS_SUBJECT_PREFIX:-dd.remote.container_pool}\" CONTAINER_POOL_NATS_TIMEOUT_MS=\"${CONTAINER_POOL_NATS_TIMEOUT_MS:-30000}\" node --permission --allow-net child-runtimes/js-function-runner.mjs";
 
+/// Browser functions run in a dedicated child that supplies an isolated page
+/// and closes its per-invocation browser context after every result. `env -i`
+/// keeps database, auth, and coordination secrets out of function code while
+/// forwarding only the browser paths and explicit egress-policy controls.
+pub const DEFAULT_BROWSER_HOST_COMMAND: &str = "env -i PATH=\"$PATH\" HOME=\"${HOME:-/tmp}\" NODE_ENV=production NODE_NO_WARNINGS=1 PLAYWRIGHT_BROWSERS_PATH=\"${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}\" PUPPETEER_EXECUTABLE_PATH=\"${PUPPETEER_EXECUTABLE_PATH:-}\" LAMBDA_BROWSER_ALLOW_PRIVATE_NETWORKS=\"${LAMBDA_BROWSER_ALLOW_PRIVATE_NETWORKS:-false}\" LAMBDA_BROWSER_ALLOWED_HOSTS=\"${LAMBDA_BROWSER_ALLOWED_HOSTS:-}\" node --permission --allow-net --allow-child-process --allow-fs-read=/app --allow-fs-read=/ms-playwright --allow-fs-write=/tmp child-runtimes/browser-function-runner.mjs";
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -423,6 +423,41 @@ mod tests {
         assert_eq!(canonical_runtime("rust"), "rust", "unknown passes through");
     }
 
+    /// The exact gate the pool→local fallback relies on: only the canonical
+    /// tokens "1"/"true" force true and "0"/"false" force false; anything else
+    /// (unset, empty, "yes", "TRUE") falls back to the caller's default.
+    #[test]
+    fn env_bool_recognizes_canonical_tokens_and_defaults_otherwise() {
+        let cases = [
+            ("1", Some(true)),
+            ("true", Some(true)),
+            ("0", Some(false)),
+            ("false", Some(false)),
+            ("yes", None),  // non-canonical → default
+            ("TRUE", None), // matching is case-sensitive → default
+            ("", None),     // empty behaves like unset → default
+        ];
+        for (i, (value, forced)) in cases.iter().enumerate() {
+            let name = format!("LAMBDA_ENV_BOOL_TEST_{i}");
+            std::env::set_var(&name, value);
+            for default in [false, true] {
+                assert_eq!(
+                    env_bool(&name, default),
+                    forced.unwrap_or(default),
+                    "value {value:?} with default {default}"
+                );
+            }
+        }
+        assert!(
+            env_bool("LAMBDA_ENV_BOOL_TEST_UNSET", true),
+            "unset → default"
+        );
+        assert!(
+            !env_bool("LAMBDA_ENV_BOOL_TEST_UNSET", false),
+            "unset → default"
+        );
+    }
+
     #[test]
     fn supported_runtime_gate() {
         assert!(supported_runtime("nodejs"));

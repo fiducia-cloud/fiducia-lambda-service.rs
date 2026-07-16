@@ -691,6 +691,36 @@ mod tests {
         ));
     }
 
+    /// Terminal states are absorbing: cancel of a COMPLETED run is refused as a
+    /// Conflict (not an error, not a state change), the run stays "completed",
+    /// and signals can no longer be delivered to it.
+    #[tokio::test]
+    async fn cancel_of_a_completed_run_is_refused_and_leaves_it_completed() {
+        let store = Store::new(cfg());
+        let id = run_id(
+            &store
+                .create_run(&inline(json!([{"type":"sleep"}])), "null", "")
+                .await
+                .unwrap(),
+        );
+        let version = store.claim_due(10, 60_000)[0].version;
+        assert!(matches!(
+            store.succeed_complete(&id, version, None, "{}", "{}"),
+            Commit::Committed(_)
+        ));
+
+        assert!(
+            matches!(store.cancel_run(&id), Commit::Conflict(_)),
+            "cancel after completion must conflict, never rewrite the status"
+        );
+        let after: Value = serde_json::from_str(&store.get_run_with_steps(&id).unwrap()).unwrap();
+        assert_eq!(after["run"]["status"], "completed", "status untouched");
+        assert!(
+            store.deliver_signal(&id, "\"go\"", "null").is_err(),
+            "terminal runs accept no signals"
+        );
+    }
+
     #[tokio::test]
     async fn signal_delivery_is_bounded() {
         let store = Store::new(cfg());

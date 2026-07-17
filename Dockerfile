@@ -1,6 +1,3 @@
-ARG NODE_RUNTIME_IMAGE=docker.io/library/node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370
-ARG PLAYWRIGHT_RUNTIME_IMAGE=mcr.microsoft.com/playwright:v1.56.0-noble@sha256:35246d87a7c88ea9b771c65d33171b2611b02a8253b4b12ce6f94376c55f99f2
-
 # The build fetches immutable sibling path dependencies rather than trusting
 # whatever happens to be present in a local parent directory.
 FROM rust:1.97.0-bookworm@sha256:7d0723df719e7f213b69dc7c8c595985c3f4b060cfbee4f7bc0e347a86fe3b6a AS build
@@ -34,12 +31,12 @@ RUN git init fiducia-telemetry.rs \
 COPY fiducia-lambda-service.rs/ fiducia-lambda-service.rs/
 RUN cargo build --release --locked --manifest-path fiducia-lambda-service.rs/Cargo.toml
 
-FROM ${NODE_RUNTIME_IMAGE} AS node-runtime
+FROM docker.io/library/node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS node-runtime
 
 # Playwright supplies the pinned Chromium build and its OS libraries. Replace
 # its bundled Node with Node 25 so browser children can use the stable network
 # permission gate in addition to child-process and read-only filesystem grants.
-FROM ${PLAYWRIGHT_RUNTIME_IMAGE}
+FROM mcr.microsoft.com/playwright:v1.56.0-noble@sha256:35246d87a7c88ea9b771c65d33171b2611b02a8253b4b12ce6f94376c55f99f2
 LABEL org.fiducia.runtime-profile="tool-runner-nonroot"
 COPY --from=node-runtime /usr/local/ /usr/local/
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client ca-certificates \

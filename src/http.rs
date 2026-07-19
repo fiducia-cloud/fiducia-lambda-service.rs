@@ -14,6 +14,7 @@ use axum::Router;
 use crate::api_docs;
 use crate::child_runner::ChildRunner;
 use crate::config::{Config, DEFAULT_NODEJS_HOST_COMMAND};
+use crate::coord::Coordinator;
 use crate::workflow::Engine;
 
 /// Shared application state handed to every handler.
@@ -22,6 +23,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub child: Arc<ChildRunner>,
     pub engine: Engine,
+    pub coord: Coordinator,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -123,22 +125,29 @@ async fn home() -> impl IntoResponse {
 }
 
 async fn healthz(State(st): State<AppState>) -> impl IntoResponse {
-    let body = format!(
-        "{{\"ok\":true,\"service\":\"fiducia-lambda-service\",\"authConfigured\":{},\"postgresConfigured\":{},\"natsConfigured\":{},\"workflowEngineEnabled\":{}}}",
-        st.config.server_auth_configured(),
-        st.config.database_url.is_some(),
-        st.config.nats_url.is_some(),
-        st.engine.enabled(),
-    );
+    let registration = st.coord.registration_status();
+    let body = serde_json::json!({
+        "ok": true,
+        "degraded": registration.configured && !registration.healthy,
+        "service": "fiducia-lambda-service",
+        "authConfigured": st.config.server_auth_configured(),
+        "postgresConfigured": st.config.database_url.is_some(),
+        "natsConfigured": st.config.nats_url.is_some(),
+        "workflowEngineEnabled": st.engine.enabled(),
+        "fiduciaNodeConfigured": registration.configured,
+        "fiduciaRegistrationHealthy": registration.configured.then_some(registration.healthy),
+    })
+    .to_string();
     json_response(StatusCode::OK, body)
 }
 
 async fn metrics(State(st): State<AppState>) -> impl IntoResponse {
     let active = st.child.active_workers().await;
     let body = format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         st.child.metrics_text(active),
-        st.engine.metrics_text()
+        st.engine.metrics_text(),
+        st.coord.registration_metrics_text(),
     );
     (
         [(

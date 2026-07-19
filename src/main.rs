@@ -42,31 +42,75 @@ async fn run() -> anyhow::Result<()> {
         config.allow_local_coordination,
     )
     .map_err(anyhow::Error::msg)?;
+    let addr = std::net::SocketAddr::new(config.host, config.port);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     coord.register_service().await.map_err(anyhow::Error::msg)?;
 
     let child = ChildRunner::new(config.clone(), metrics.clone(), nats.clone());
     let store = Arc::new(Store::new(config.clone()));
-    let engine = Engine::new(store, child.clone(), coord, nats.clone(), config.clone());
+    let engine = Engine::new(
+        store,
+        child.clone(),
+        coord.clone(),
+        nats.clone(),
+        config.clone(),
+    );
     engine.start();
 
     let state = AppState {
         config: Arc::new(config.clone()),
         child,
         engine,
+        coord: coord.clone(),
     };
 
-    let addr = std::net::SocketAddr::new(config.host, config.port);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "listening");
 
+    let (registration_shutdown, registration_shutdown_rx) = tokio::sync::watch::channel(false);
+    let registration_task = coord.enabled().then(|| {
+        let coordinator = coord.clone();
+        tokio::spawn(async move {
+            coordinator
+                .maintain_service_registration(registration_shutdown_rx)
+                .await;
+        })
+    });
+
     let app = fiducia_lambda_service::router(state);
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    let _ = registration_shutdown.send(true);
+    if let Some(task) = registration_task {
+        if let Err(error) = task.await {
+            tracing::warn!(%error, "service registration heartbeat task failed during shutdown");
+        }
+    }
+    if let Err(error) = coord.deregister_service().await {
+        tracing::warn!(%error, "failed to deregister fiducia-node service instance at shutdown");
+    }
+    serve_result?;
     Ok(())
 }
 
 async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+        match terminate {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to install SIGTERM handler; waiting for Ctrl-C");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
     info!("shutdown signal received");
 }

@@ -35,7 +35,10 @@ than degrading to local authority. Long-running steps renew their exact
 holder-and-fencing-token grant every 20 seconds (or one third of a shorter TTL)
 and are cancelled immediately if renewal loses authority. A configured
 deployment also supplies the non-secret `FIDUCIA_SERVICE_ADDRESS` that peers can
-resolve.
+resolve. Its 30-second discovery lease heartbeats every 10 seconds, retries
+registration on a bounded two-second cadence while degraded, and deregisters on
+graceful Ctrl-C or Kubernetes `SIGTERM`. Discovery degradation is exposed in
+`/healthz` and `/metrics` but does not bypass or disable run-lock authority.
 NATS is delivery; fiducia-node is authority.
 
 ## HTTP API
@@ -168,7 +171,11 @@ per invocation.
   grant; renewal loss cancels work, and release uses the same holder/token pair.
   Configured-node registration, idempotency, acquire, renewal, or release
   failures never fall back to single-process execution; malformed authority
-  envelopes are rejected as errors.
+  envelopes are rejected as errors. Service-discovery heartbeats are monitored
+  independently: losing registration marks the process degraded and triggers
+  re-registration, while run locks continue to make their own authoritative
+  node calls. Graceful shutdown stops the heartbeat before deregistering the
+  exact instance.
 - **Input handling:** no `unwrap`/`panic` on request-derived input; request
   bodies are size-limited (`LAMBDA_MAX_BODY_BYTES`) and parsed fallibly. Secrets
   are never written to logs. Child stdout is read through a `MAX_RESULT_BYTES`

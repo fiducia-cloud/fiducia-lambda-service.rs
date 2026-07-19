@@ -15,13 +15,33 @@
 //! requires an explicit development opt-in; once a node is configured,
 //! credentials and every authority decision fail closed.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use fiducia_client::{FiduciaClient, LockHandle, LockOptions};
 use fiducia_interfaces as types;
 
 const RUN_LEASE_TTL_MS: u64 = 60_000;
 const MAX_RENEWAL_INTERVAL_MS: u64 = 20_000;
+const SERVICE_NAME: &str = "fiducia-lambda-service";
+const SERVICE_REGISTRATION_TTL_MS: u64 = 30_000;
+const SERVICE_HEARTBEAT_INTERVAL_MS: u64 = SERVICE_REGISTRATION_TTL_MS / 3;
+const SERVICE_REREGISTRATION_RETRY_MS: u64 = 2_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegistrationStatus {
+    pub configured: bool,
+    pub healthy: bool,
+    pub heartbeat_failures: u64,
+    pub reregistration_attempts: u64,
+    pub reregistration_failures: u64,
+    pub recoveries: u64,
+}
 
 /// A held run lease: the caller-chosen holder plus fiducia-node's fencing token.
 /// The token is monotonic — a stale holder's token is always lower than the
@@ -55,6 +75,11 @@ pub struct Coordinator {
     inner: Option<Arc<FiduciaClient>>,
     instance_id: String,
     service_address: String,
+    registration_healthy: Arc<AtomicBool>,
+    registration_heartbeat_failures: Arc<AtomicU64>,
+    registration_reregistration_attempts: Arc<AtomicU64>,
+    registration_reregistration_failures: Arc<AtomicU64>,
+    registration_recoveries: Arc<AtomicU64>,
 }
 
 impl Coordinator {
@@ -106,6 +131,11 @@ impl Coordinator {
             inner,
             instance_id: instance_id.into(),
             service_address,
+            registration_healthy: Arc::new(AtomicBool::new(false)),
+            registration_heartbeat_failures: Arc::new(AtomicU64::new(0)),
+            registration_reregistration_attempts: Arc::new(AtomicU64::new(0)),
+            registration_reregistration_failures: Arc::new(AtomicU64::new(0)),
+            registration_recoveries: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -113,16 +143,109 @@ impl Coordinator {
         self.inner.is_some()
     }
 
+    pub fn registration_status(&self) -> RegistrationStatus {
+        RegistrationStatus {
+            configured: self.enabled(),
+            healthy: self.registration_healthy.load(Ordering::Relaxed),
+            heartbeat_failures: self.registration_heartbeat_failures.load(Ordering::Relaxed),
+            reregistration_attempts: self
+                .registration_reregistration_attempts
+                .load(Ordering::Relaxed),
+            reregistration_failures: self
+                .registration_reregistration_failures
+                .load(Ordering::Relaxed),
+            recoveries: self.registration_recoveries.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn registration_metrics_text(&self) -> String {
+        let status = self.registration_status();
+        let line = |name: &str, value: u64| {
+            format!("{name}{{service=\"dd-fiducia-lambda-service\"}} {value}\n")
+        };
+        let mut output = String::new();
+        let metric = |output: &mut String, name: &str, help: &str, kind: &str, value: u64| {
+            output.push_str(&format!("# HELP {name} {help}\n# TYPE {name} {kind}\n"));
+            output.push_str(&line(name, value));
+        };
+        metric(
+            &mut output,
+            "dd_lambda_runner_fiducia_registration_configured",
+            "Whether fiducia-node service registration is configured.",
+            "gauge",
+            u64::from(status.configured),
+        );
+        metric(
+            &mut output,
+            "dd_lambda_runner_fiducia_registration_healthy",
+            "Whether the latest fiducia-node service registration operation succeeded.",
+            "gauge",
+            u64::from(status.configured && status.healthy),
+        );
+        metric(
+            &mut output,
+            "dd_lambda_runner_fiducia_registration_heartbeat_failures_total",
+            "Failed fiducia-node service registration heartbeats.",
+            "counter",
+            status.heartbeat_failures,
+        );
+        metric(
+            &mut output,
+            "dd_lambda_runner_fiducia_registration_reregistration_attempts_total",
+            "Attempts to restore a degraded fiducia-node service registration.",
+            "counter",
+            status.reregistration_attempts,
+        );
+        metric(
+            &mut output,
+            "dd_lambda_runner_fiducia_registration_reregistration_failures_total",
+            "Failed attempts to restore a degraded fiducia-node service registration.",
+            "counter",
+            status.reregistration_failures,
+        );
+        metric(
+            &mut output,
+            "dd_lambda_runner_fiducia_registration_recoveries_total",
+            "Degraded fiducia-node registrations restored by re-registration.",
+            "counter",
+            status.recoveries,
+        );
+        output
+    }
+
     /// Register this process before serving. A configured node is authoritative,
     /// so transport, authentication, and response-contract errors abort startup.
     pub async fn register_service(&self) -> Result<(), String> {
+        if self.inner.is_none() {
+            return Ok(());
+        }
+        match self.register_service_once().await {
+            Ok(()) => {
+                self.registration_healthy.store(true, Ordering::Relaxed);
+                tracing::info!(instance = %self.instance_id, "registered with fiducia-node");
+                Ok(())
+            }
+            Err(error) => {
+                self.registration_healthy.store(false, Ordering::Relaxed);
+                Err(error)
+            }
+        }
+    }
+
+    async fn register_service_once(&self) -> Result<(), String> {
         let Some(client) = self.inner.clone() else {
             return Ok(());
         };
         let instance = self.instance_id.clone();
         let address = self.service_address.clone();
         let response = tokio::task::spawn_blocking(move || {
-            client.service_register("fiducia-lambda-service", &instance, &address, 30_000, None)
+            client.service_register(
+                SERVICE_NAME,
+                &instance,
+                &address,
+                SERVICE_REGISTRATION_TTL_MS,
+                None,
+            )
         })
         .await
         .map_err(|error| format!("service registration task failed: {error}"))?
@@ -138,9 +261,134 @@ impl Coordinator {
             .pointer("/result/output/instance")
             .cloned()
             .ok_or_else(|| "service registration response omitted instance".to_string())?;
-        serde_json::from_value::<types::ServiceInstance>(instance)
+        let instance = serde_json::from_value::<types::ServiceInstance>(instance)
             .map_err(|error| format!("invalid service registration response: {error}"))?;
-        tracing::info!(instance = %self.instance_id, "registered with fiducia-node");
+        validate_service_instance(&instance, &self.instance_id, &self.service_address)?;
+        Ok(())
+    }
+
+    /// Keep the independent service-discovery lease alive. Registration health
+    /// is observable, but never gates or bypasses run-lock authority.
+    pub async fn maintain_service_registration(
+        &self,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        self.maintain_service_registration_with_intervals(
+            shutdown,
+            Duration::from_millis(SERVICE_HEARTBEAT_INTERVAL_MS),
+            Duration::from_millis(SERVICE_REREGISTRATION_RETRY_MS),
+        )
+        .await;
+    }
+
+    async fn maintain_service_registration_with_intervals(
+        &self,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+        heartbeat_interval: Duration,
+        retry_interval: Duration,
+    ) {
+        if self.inner.is_none() || *shutdown.borrow() {
+            return;
+        }
+        let mut needs_registration = false;
+        loop {
+            let delay = if needs_registration {
+                retry_interval
+            } else {
+                heartbeat_interval
+            };
+            tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        return;
+                    }
+                }
+                _ = tokio::time::sleep(delay) => {
+                    if needs_registration {
+                        self.registration_reregistration_attempts.fetch_add(1, Ordering::Relaxed);
+                        match self.register_service_once().await {
+                            Ok(()) => {
+                                self.registration_healthy.store(true, Ordering::Relaxed);
+                                self.registration_recoveries.fetch_add(1, Ordering::Relaxed);
+                                needs_registration = false;
+                                tracing::info!(instance = %self.instance_id, "fiducia-node service registration recovered");
+                            }
+                            Err(error) => {
+                                self.registration_healthy.store(false, Ordering::Relaxed);
+                                self.registration_reregistration_failures.fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(%error, instance = %self.instance_id, "fiducia-node service re-registration failed; remaining degraded");
+                            }
+                        }
+                    } else if let Err(error) = self.heartbeat_service_once().await {
+                        self.registration_healthy.store(false, Ordering::Relaxed);
+                        self.registration_heartbeat_failures.fetch_add(1, Ordering::Relaxed);
+                        needs_registration = true;
+                        tracing::warn!(%error, instance = %self.instance_id, "fiducia-node service registration heartbeat failed; entering degraded state");
+                    } else {
+                        self.registration_healthy.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn heartbeat_service_once(&self) -> Result<(), String> {
+        let Some(client) = self.inner.clone() else {
+            return Ok(());
+        };
+        let instance_id = self.instance_id.clone();
+        let expected_instance_id = instance_id.clone();
+        let expected_address = self.service_address.clone();
+        let response = tokio::task::spawn_blocking(move || {
+            client.service_heartbeat_with_ttl(
+                SERVICE_NAME,
+                &instance_id,
+                Some(SERVICE_REGISTRATION_TTL_MS),
+            )
+        })
+        .await
+        .map_err(|error| format!("service heartbeat task failed: {error}"))?
+        .map_err(|error| format!("service heartbeat request failed: {error:?}"))?;
+        let output = response
+            .pointer("/result/output")
+            .ok_or_else(|| "service heartbeat response omitted result.output".to_string())?;
+        if output.get("heartbeat").and_then(|value| value.as_bool()) != Some(true) {
+            return Err(format!(
+                "fiducia-node rejected service heartbeat: {}",
+                output
+                    .get("reason")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("invalid_response")
+            ));
+        }
+        let instance = output
+            .get("instance")
+            .cloned()
+            .ok_or_else(|| "service heartbeat response omitted instance".to_string())?;
+        let instance = serde_json::from_value::<types::ServiceInstance>(instance)
+            .map_err(|error| format!("invalid service heartbeat response: {error}"))?;
+        validate_service_instance(&instance, &expected_instance_id, &expected_address)
+    }
+
+    pub async fn deregister_service(&self) -> Result<(), String> {
+        let Some(client) = self.inner.clone() else {
+            return Ok(());
+        };
+        let instance_id = self.instance_id.clone();
+        let response = tokio::task::spawn_blocking(move || {
+            client.service_deregister(SERVICE_NAME, &instance_id)
+        })
+        .await
+        .map_err(|error| format!("service deregistration task failed: {error}"))?
+        .map_err(|error| format!("service deregistration request failed: {error:?}"))?;
+        let deregistered = response
+            .pointer("/result/output/deregistered")
+            .and_then(|value| value.as_bool())
+            .ok_or_else(|| "service deregistration response omitted deregistered".to_string())?;
+        self.registration_healthy.store(false, Ordering::Relaxed);
+        if !deregistered {
+            tracing::info!(instance = %self.instance_id, "fiducia-node service registration was already absent at shutdown");
+        }
         Ok(())
     }
 
@@ -304,6 +552,25 @@ impl Coordinator {
     }
 }
 
+fn validate_service_instance(
+    instance: &types::ServiceInstance,
+    expected_instance_id: &str,
+    expected_address: &str,
+) -> Result<(), String> {
+    // `lease_expires_ms` is stamped by the node's clock. Require a meaningful
+    // absolute value without comparing it to this process's potentially skewed
+    // wall clock; the local heartbeat cadence is derived from the requested TTL.
+    if instance.instance_id != expected_instance_id
+        || instance.address != expected_address
+        || instance.lease_expires_ms <= 0
+    {
+        return Err(
+            "service registration response did not preserve the exact instance lease".to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn run_lease_from_handle(key: String, ttl_ms: u64, handle: LockHandle) -> Result<RunLease, String> {
     if handle.keys.as_slice() != std::slice::from_ref(&key)
         || handle.holder.trim().is_empty()
@@ -446,7 +713,7 @@ mod tests {
 
     #[tokio::test]
     async fn registration_sends_normalized_internal_headers() {
-        const BODY: &str = r#"{"committed":true,"result":{"output":{"registered":true,"instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":123,"metadata":{}}}}}"#;
+        const BODY: &str = r#"{"committed":true,"result":{"output":{"registered":true,"instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":4000000000000,"metadata":{}}}}}"#;
         let (url, request_rx, server) = serve_once("200 OK", BODY);
         let coordinator = Coordinator::new(
             Some(&url),
@@ -458,6 +725,17 @@ mod tests {
         )
         .unwrap();
         coordinator.register_service().await.unwrap();
+        assert_eq!(
+            coordinator.registration_status(),
+            RegistrationStatus {
+                configured: true,
+                healthy: true,
+                heartbeat_failures: 0,
+                reregistration_attempts: 0,
+                reregistration_failures: 0,
+                recoveries: 0,
+            }
+        );
         let request = request_rx
             .recv_timeout(Duration::from_secs(2))
             .unwrap()
@@ -483,6 +761,192 @@ mod tests {
         )
         .unwrap();
         assert!(coordinator.register_service().await.is_err());
+        assert!(!coordinator.registration_status().healthy);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn registration_supervisor_heartbeats_and_deregisters_exact_instance() {
+        const REGISTERED: &str = r#"{"committed":true,"result":{"output":{"registered":true,"instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":4000000000000,"metadata":{}}}}}"#;
+        const HEARTBEAT: &str = r#"{"committed":true,"result":{"output":{"heartbeat":true,"service":"fiducia-lambda-service","instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":4000000030000,"metadata":{}}}}}"#;
+        const DEREGISTERED: &str = r#"{"committed":true,"result":{"output":{"deregistered":true,"service":"fiducia-lambda-service","instance_id":"instance-1"}}}"#;
+        let (url, request_rx, server) = serve_responses(vec![
+            ("200 OK", REGISTERED),
+            ("200 OK", HEARTBEAT),
+            ("200 OK", DEREGISTERED),
+        ]);
+        let coordinator = Coordinator::new(
+            Some(&url),
+            Some("node-secret"),
+            "fiducia-lambda-service",
+            Some("http://lambda-service:8083"),
+            "instance-1",
+            false,
+        )
+        .unwrap();
+        coordinator.register_service().await.unwrap();
+        let register = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            register.starts_with("PUT /v1/services/fiducia-lambda-service/instances/instance-1 ")
+        );
+        assert_eq!(
+            request_json(&register)["ttl_ms"],
+            SERVICE_REGISTRATION_TTL_MS
+        );
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let supervised = coordinator.clone();
+        let supervisor = tokio::spawn(async move {
+            supervised
+                .maintain_service_registration_with_intervals(
+                    shutdown_rx,
+                    Duration::from_millis(5),
+                    Duration::from_millis(2),
+                )
+                .await;
+        });
+        let (heartbeat, request_rx) = tokio::task::spawn_blocking(move || {
+            let heartbeat = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            (heartbeat, request_rx)
+        })
+        .await
+        .unwrap();
+        assert!(heartbeat.starts_with(
+            "POST /v1/services/fiducia-lambda-service/instances/instance-1/heartbeat "
+        ));
+        assert_eq!(
+            request_json(&heartbeat),
+            json!({"ttl_ms": SERVICE_REGISTRATION_TTL_MS})
+        );
+        shutdown_tx.send(true).unwrap();
+        supervisor.await.unwrap();
+
+        coordinator.deregister_service().await.unwrap();
+        let deregister = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(deregister
+            .starts_with("DELETE /v1/services/fiducia-lambda-service/instances/instance-1 "));
+        assert!(!coordinator.registration_status().healthy);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_heartbeat_recovers_through_bounded_reregistration() {
+        const REGISTERED: &str = r#"{"committed":true,"result":{"output":{"registered":true,"instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":4000000000000,"metadata":{}}}}}"#;
+        const LOST: &str = r#"{"committed":true,"result":{"output":{"heartbeat":false,"reason":"not_found","service":"fiducia-lambda-service","instance_id":"instance-1"}}}"#;
+        const RECOVERED: &str = r#"{"committed":true,"result":{"output":{"registered":true,"instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":4000000030000,"metadata":{}}}}}"#;
+        let (url, request_rx, server) = serve_responses(vec![
+            ("200 OK", REGISTERED),
+            ("200 OK", LOST),
+            ("200 OK", RECOVERED),
+        ]);
+        let coordinator = Coordinator::new(
+            Some(&url),
+            Some("node-secret"),
+            "fiducia-lambda-service",
+            Some("http://lambda-service:8083"),
+            "instance-1",
+            false,
+        )
+        .unwrap();
+        coordinator.register_service().await.unwrap();
+        request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let supervised = coordinator.clone();
+        let supervisor = tokio::spawn(async move {
+            supervised
+                .maintain_service_registration_with_intervals(
+                    shutdown_rx,
+                    Duration::from_millis(5),
+                    Duration::from_millis(2),
+                )
+                .await;
+        });
+        let (heartbeat, reregister) = tokio::task::spawn_blocking(move || {
+            let heartbeat = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            let reregister = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            (heartbeat, reregister)
+        })
+        .await
+        .unwrap();
+        shutdown_tx.send(true).unwrap();
+        supervisor.await.unwrap();
+
+        assert!(heartbeat.contains("/heartbeat HTTP/1.1"));
+        assert!(
+            reregister.starts_with("PUT /v1/services/fiducia-lambda-service/instances/instance-1 ")
+        );
+        let status = coordinator.registration_status();
+        assert!(status.healthy);
+        assert_eq!(status.heartbeat_failures, 1);
+        assert_eq!(status.reregistration_attempts, 1);
+        assert_eq!(status.reregistration_failures, 0);
+        assert_eq!(status.recoveries, 1);
+        let metrics = coordinator.registration_metrics_text();
+        assert!(metrics.contains(
+            "dd_lambda_runner_fiducia_registration_heartbeat_failures_total{service=\"dd-fiducia-lambda-service\"} 1"
+        ));
+        assert!(metrics.contains(
+            "dd_lambda_runner_fiducia_registration_healthy{service=\"dd-fiducia-lambda-service\"} 1"
+        ));
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn registration_degradation_does_not_bypass_run_lock_authority() {
+        const REGISTERED: &str = r#"{"committed":true,"result":{"output":{"registered":true,"instance":{"instance_id":"instance-1","address":"http://lambda-service:8083","lease_expires_ms":4000000000000,"metadata":{}}}}}"#;
+        const ACQUIRED: &str = r#"{"committed":true,"result":{"output":{"acquired":true,"keys":["workflow/run/after-loss"],"holder":"instance-1","fencing_token":29,"lease_expires_ms":400,"revision":4}}}"#;
+        let (url, request_rx, server) = serve_responses(vec![
+            ("200 OK", REGISTERED),
+            ("503 Service Unavailable", r#"{"error":"unavailable"}"#),
+            ("503 Service Unavailable", r#"{"error":"unavailable"}"#),
+            ("200 OK", ACQUIRED),
+        ]);
+        let coordinator = Coordinator::new(
+            Some(&url),
+            Some("node-secret"),
+            "fiducia-lambda-service",
+            Some("http://lambda-service:8083"),
+            "instance-1",
+            false,
+        )
+        .unwrap();
+        coordinator.register_service().await.unwrap();
+        request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let supervised = coordinator.clone();
+        let supervisor = tokio::spawn(async move {
+            supervised
+                .maintain_service_registration_with_intervals(
+                    shutdown_rx,
+                    Duration::from_millis(5),
+                    Duration::from_millis(2),
+                )
+                .await;
+        });
+        let request_rx = tokio::task::spawn_blocking(move || {
+            request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            request_rx
+        })
+        .await
+        .unwrap();
+        shutdown_tx.send(true).unwrap();
+        supervisor.await.unwrap();
+        let status = coordinator.registration_status();
+        assert!(!status.healthy);
+        assert_eq!(status.heartbeat_failures, 1);
+        assert_eq!(status.reregistration_failures, 1);
+
+        let lease = coordinator
+            .try_lease_run("after-loss")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.fencing_token, 29);
+        let acquire = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(acquire.starts_with("POST /v1/locks/acquire "));
         server.join().unwrap();
     }
 

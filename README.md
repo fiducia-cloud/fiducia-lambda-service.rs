@@ -21,17 +21,21 @@ Two subsystems share one process:
 | Concern | Mechanism |
 | --- | --- |
 | Messaging | `fiducia-messaging` envelope; **NATS** JetStream with `Nats-Msg-Id` dedup for lifecycle events, Core request/reply for container-pool dispatch |
-| Coordination (optional) | **fiducia-node** via an authenticated, tenant-scoped `fiducia-client` — run leases + fencing tokens, idempotency claims, service registration |
+| Coordination | **fiducia-node** via an authenticated, tenant-scoped `fiducia-client` — run leases + fencing tokens, idempotency claims, service registration |
 | Function definitions | **Postgres** via `psql` (`LAMBDA_DATABASE_URL`) |
 | Shared types | `fiducia-interfaces` |
 | Telemetry | `fiducia-telemetry` structured logs + optional OTLP traces; Prometheus counters at `/metrics` |
 
-fiducia-node is optional only as an explicit single-process mode: with neither
-`FIDUCIA_NODE_URL` nor legacy `FIDUCIA_BASE_URL`, the engine uses local synthetic
-leases. Once a node URL is configured, its internal secret is mandatory,
-startup registration must succeed, and idempotency/lease errors stop the
-operation rather than degrading to local authority. A configured deployment
-also supplies the non-secret `FIDUCIA_SERVICE_ADDRESS` that peers can resolve.
+fiducia-node is required by default. Local development may explicitly set
+`FIDUCIA_ALLOW_LOCAL_COORDINATION=true` to select single-process synthetic
+leases; that mode is never selected merely because a node URL is missing. Once
+a node URL is configured, its internal secret is mandatory, startup registration
+must succeed, and idempotency, lease, or renewal errors stop the operation rather
+than degrading to local authority. Long-running steps renew their exact
+holder-and-fencing-token grant every 20 seconds (or one third of a shorter TTL)
+and are cancelled immediately if renewal loses authority. A configured
+deployment also supplies the non-secret `FIDUCIA_SERVICE_ADDRESS` that peers can
+resolve.
 NATS is delivery; fiducia-node is authority.
 
 ## HTTP API
@@ -80,10 +84,11 @@ CLI flag surface; never log them.
 | `LAMBDA_MAX_BODY_BYTES` | integer | `5242880` | Max invoke/check/workflow body |
 | `NATS_URL` | string | — | NATS server; absent → publisher/dispatcher no-op; initial failures retry every five seconds |
 | `NATS_WORKFLOW_EVENT_SUBJECT` | string | `dd.remote.workflows.events` | Workflow lifecycle event subject |
-| `FIDUCIA_NODE_URL` / `FIDUCIA_BASE_URL` | string | — | Optional direct fiducia-node endpoint; `FIDUCIA_BASE_URL` is a compatibility alias |
+| `FIDUCIA_NODE_URL` / `FIDUCIA_BASE_URL` | string | — | Required direct fiducia-node endpoint unless explicit local coordination is enabled; `FIDUCIA_BASE_URL` is a compatibility alias |
 | `FIDUCIA_NODE_INTERNAL_SECRET` / `FIDUCIA_INTERNAL_SECRET` | string (**secret**) | — | Required internal-hop secret whenever a node URL is configured; environment-only |
 | `FIDUCIA_NODE_ORG_ID` | string | `fiducia-lambda-service` | Distinct `x-fiducia-org-id` namespace for lambda workflow authority |
 | `FIDUCIA_SERVICE_ADDRESS` | string | — | Required reachable address registered in fiducia-node service discovery whenever coordination is configured |
+| `FIDUCIA_ALLOW_LOCAL_COORDINATION` | boolean | `false` | Development-only explicit opt-in to synthetic single-process authority when no node URL is configured |
 | `WORKFLOW_ENGINE_ENABLED` | string | enabled | Toggle the durable workflow scheduler |
 | `LAMBDA_CHILD_IDLE_MS` | integer | `300000` | Warm child idle-reap window |
 | `LAMBDA_CHILD_TIMEOUT_MS` | integer | `30000` | Hard per-invocation timeout |
@@ -117,10 +122,10 @@ accepted only through environment variables, never command-line flags.
 
 CI and the container build consume immutable, verified sibling revisions:
 
-- `fiducia-clients` at `1446b254b4bfd57b2df75c3c451a663313f19eb9`
-- `fiducia-interfaces` at `3072e824e4e10f4a392a5851ea155ab5693ff206`
+- `fiducia-clients` at `5695b16a1577aadbfe414123927e45927f88a7f0`
+- `fiducia-interfaces` at `6e20a3f4df2e52b99a0ad6add83d4528262b5dbc`
 - `fiducia-messaging.rs` at `cec4ea4f54162758858c6c284324c34a42f3f3d7`
-- `fiducia-telemetry.rs` at `724844e62ba35f409917d72343e7804c199878a9`
+- `fiducia-telemetry.rs` at `20ed56d9e725c9189deb7386a2dee91ea8b25fdb`
 
 The Dockerfile shallow-fetches those exact commits, verifies each detached
 `HEAD`, and compiles with `Cargo.lock`. Update both the CI checkout and matching
@@ -158,8 +163,11 @@ per invocation.
   unconfigured or mismatched.
 - **Coordination authority:** direct node calls attach both
   `x-fiducia-internal-auth` and the distinct `fiducia-lambda-service` org scope.
-  Configured-node registration, idempotency, or lease failures never mint token
-  `0` and never fall back to single-process execution; malformed authority
+  Successful run leases retain the exact holder, positive fencing token, expiry,
+  and key union from the hardened client contract. Long steps renew that exact
+  grant; renewal loss cancels work, and release uses the same holder/token pair.
+  Configured-node registration, idempotency, acquire, renewal, or release
+  failures never fall back to single-process execution; malformed authority
   envelopes are rejected as errors.
 - **Input handling:** no `unwrap`/`panic` on request-derived input; request
   bodies are size-limited (`LAMBDA_MAX_BODY_BYTES`) and parsed fallibly. Secrets

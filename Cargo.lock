@@ -429,14 +429,33 @@ dependencies = [
 name = "fiducia-client"
 version = "0.1.0"
 dependencies = [
- "fiducia-interfaces",
+ "fiducia-interfaces 0.1.0 (git+https://github.com/fiducia-cloud/fiducia-interfaces.git?rev=6e20a3f4df2e52b99a0ad6add83d4528262b5dbc)",
  "serde_json",
  "ureq",
+ "uuid",
 ]
 
 [[package]]
 name = "fiducia-interfaces"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fiducia-interfaces"
+version = "0.1.0"
+source = "git+https://github.com/fiducia-cloud/fiducia-interfaces.git?rev=6e20a3f4df2e52b99a0ad6add83d4528262b5dbc#6e20a3f4df2e52b99a0ad6add83d4528262b5dbc"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fiducia-interfaces"
+version = "0.1.0"
+source = "git+https://github.com/fiducia-cloud/fiducia-interfaces?rev=e3dba39566e036ad61de91e2e6c1d625ec2b5411#e3dba39566e036ad61de91e2e6c1d625ec2b5411"
 dependencies = [
  "serde",
  "serde_json",
@@ -452,7 +471,7 @@ dependencies = [
  "bytes",
  "chrono",
  "fiducia-client",
- "fiducia-interfaces",
+ "fiducia-interfaces 0.1.0",
  "fiducia-messaging",
  "fiducia-telemetry",
  "parking_lot",
@@ -485,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "fiducia-telemetry"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
- "fiducia-interfaces",
+ "fiducia-interfaces 0.1.0 (git+https://github.com/fiducia-cloud/fiducia-interfaces?rev=e3dba39566e036ad61de91e2e6c1d625ec2b5411)",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

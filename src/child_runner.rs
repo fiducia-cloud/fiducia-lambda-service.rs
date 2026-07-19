@@ -528,6 +528,7 @@ mod tests {
     #[tokio::test]
     async fn pool_failure_with_fallback_disabled_surfaces_the_reason() {
         std::env::set_var("LAMBDA_POOL_FALLBACK_LOCAL", "0");
+        std::env::set_var("FIDUCIA_ALLOW_LOCAL_COORDINATION", "1");
         let metrics = Arc::new(Metrics::default());
         let config = Config::from_env().expect("bare-env config");
         let nats = Arc::new(Nats::new(&config, metrics.clone()));
@@ -546,6 +547,7 @@ mod tests {
             )
             .await;
         std::env::remove_var("LAMBDA_POOL_FALLBACK_LOCAL");
+        std::env::remove_var("FIDUCIA_ALLOW_LOCAL_COORDINATION");
 
         assert_eq!(
             result.expect_err("must fail without NATS and without fallback"),

@@ -11,23 +11,42 @@
 //!     token) ever drives a given run.
 //!
 //! `fiducia-client` is blocking (ureq); every call is dispatched to the blocking
-//! pool so it never stalls the async runtime. An absent node URL is an explicit
-//! single-process mode; once a node is configured, credentials and every
-//! authority decision fail closed.
+//! pool so it never stalls the async runtime. Synthetic single-process mode
+//! requires an explicit development opt-in; once a node is configured,
+//! credentials and every authority decision fail closed.
 
 use std::{sync::Arc, time::Duration};
 
-use fiducia_client::FiduciaClient;
+use fiducia_client::{FiduciaClient, LockHandle, LockOptions};
 use fiducia_interfaces as types;
 
-/// A held run lease: the fiducia-node lock id plus its fencing token. The token
-/// is monotonic — a stale holder's token is always lower than the current one,
-/// so downstream mutations can reject it.
+const RUN_LEASE_TTL_MS: u64 = 60_000;
+const MAX_RENEWAL_INTERVAL_MS: u64 = 20_000;
+
+/// A held run lease: the caller-chosen holder plus fiducia-node's fencing token.
+/// The token is monotonic — a stale holder's token is always lower than the
+/// current one, so downstream mutations can reject it.
 #[derive(Debug, Clone)]
 pub struct RunLease {
     pub key: String,
-    pub lock_id: String,
+    pub holder: String,
     pub fencing_token: u64,
+    pub lease_expires_ms: Option<u64>,
+    ttl_ms: u64,
+    authoritative: bool,
+}
+
+impl RunLease {
+    fn as_lock_handle(&self) -> LockHandle {
+        LockHandle {
+            keys: vec![self.key.clone()],
+            holder: self.holder.clone(),
+            fencing_token: self.fencing_token,
+            fencing_tokens: Default::default(),
+            lease_expires_ms: self.lease_expires_ms,
+            ttl_ms: self.ttl_ms,
+        }
+    }
 }
 
 /// Thin async wrapper over the blocking fiducia client.
@@ -45,9 +64,16 @@ impl Coordinator {
         org_id: &str,
         service_address: Option<&str>,
         instance_id: impl Into<String>,
+        allow_local_coordination: bool,
     ) -> Result<Self, String> {
         let (inner, service_address) = match base_url {
-            None => (None, String::new()),
+            None if allow_local_coordination => (None, String::new()),
+            None => {
+                return Err(
+                    "fiducia-node is required unless explicit local coordination is enabled"
+                        .to_string(),
+                );
+            }
             Some(base_url) => {
                 let secret = internal_secret
                     .map(str::trim)
@@ -148,36 +174,103 @@ impl Coordinator {
 
     /// Try to acquire the exclusive lease that authorizes advancing a run. The
     /// returned fencing token stamps any external mutation the run performs.
-    /// With no coordinator, an explicit single-process mode grants a synthetic
-    /// lease. A configured coordinator never falls back to this path.
+    /// In explicitly enabled single-process development mode this grants a
+    /// synthetic lease. A configured coordinator never falls back to this path.
     pub async fn try_lease_run(&self, run_id: &str) -> Result<Option<RunLease>, String> {
+        self.try_lease_run_with_ttl(run_id, RUN_LEASE_TTL_MS).await
+    }
+
+    async fn try_lease_run_with_ttl(
+        &self,
+        run_id: &str,
+        ttl_ms: u64,
+    ) -> Result<Option<RunLease>, String> {
         let key = format!("workflow/run/{run_id}");
         let Some(client) = self.inner.clone() else {
             return Ok(Some(RunLease {
                 key: key.clone(),
-                lock_id: self.instance_id.clone(),
+                holder: self.instance_id.clone(),
                 fencing_token: 1,
+                lease_expires_ms: None,
+                ttl_ms,
+                authoritative: false,
             }));
         };
         let holder = self.instance_id.clone();
         let key2 = key.clone();
-        tokio::task::spawn_blocking(move || {
-            // Non-blocking try-lock with a 60s lease; the scheduler re-leases on
-            // each tick, so a crashed holder's lease lapses and another replica
-            // reclaims the run.
-            match client.try_lock(&key2, Some(&holder), Some(60_000), None) {
-                Ok(v) => parse_run_lease(&v, key2),
-                Err(e) => Err(format!("{e:?}")),
-            }
+        let handle = tokio::task::spawn_blocking(move || {
+            client.try_lock_handle(
+                &[&key2],
+                LockOptions {
+                    ttl_ms,
+                    holder: Some(holder),
+                    ..LockOptions::default()
+                },
+            )
         })
         .await
-        .map_err(|e| e.to_string())?
-        .map(|opt| {
-            opt.map(|mut lease| {
-                lease.key = key;
-                lease
-            })
-        })
+        .map_err(|error| format!("run lease acquisition task failed: {error}"))?
+        .map_err(|error| format!("run lease acquisition request failed: {error}"))?;
+        handle
+            .map(|handle| run_lease_from_handle(key, ttl_ms, handle))
+            .transpose()
+    }
+
+    /// Renew until cancelled by the caller. Any transport, contract, or fenced
+    /// authority failure ends the loop immediately so the workflow step can be
+    /// cancelled before it performs another mutation.
+    pub async fn maintain_run_lease(&self, lease: RunLease) -> Result<(), String> {
+        if !lease.authoritative {
+            return std::future::pending::<Result<(), String>>().await;
+        }
+        let interval_ms = (lease.ttl_ms / 3).clamp(1, MAX_RENEWAL_INTERVAL_MS);
+        loop {
+            tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+            self.renew_run_once(&lease).await?;
+        }
+    }
+
+    async fn renew_run_once(&self, lease: &RunLease) -> Result<(), String> {
+        let Some(client) = self.inner.clone() else {
+            return if lease.authoritative {
+                Err("authoritative run lease has no configured coordinator".to_string())
+            } else {
+                Ok(())
+            };
+        };
+        let mut handle = lease.as_lock_handle();
+        let expected_key = lease.key.clone();
+        let expected_holder = lease.holder.clone();
+        let expected_token = lease.fencing_token;
+        let ttl_ms = lease.ttl_ms;
+        let response =
+            tokio::task::spawn_blocking(move || client.renew_lock(&mut handle, Some(ttl_ms)))
+                .await
+                .map_err(|error| format!("run lease renewal task failed: {error}"))?
+                .map_err(|error| format!("run lease renewal request failed: {error:?}"))?;
+        let output = response
+            .pointer("/result/output")
+            .cloned()
+            .ok_or_else(|| "run lease renewal response omitted result.output".to_string())?;
+        let renewed: types::LockRenewResponse = serde_json::from_value(output)
+            .map_err(|error| format!("invalid run lease renewal response: {error}"))?;
+        if !renewed.renewed {
+            return Err(format!(
+                "fiducia-node rejected run lease renewal: {:?}",
+                renewed.reason
+            ));
+        }
+        if renewed.holder.as_deref() != Some(expected_holder.as_str())
+            || renewed
+                .fencing_token
+                .and_then(|token| u64::try_from(token).ok())
+                != Some(expected_token)
+            || renewed.keys.as_deref() != Some(std::slice::from_ref(&expected_key))
+            || renewed.lease_expires_ms.is_none_or(|expiry| expiry <= 0)
+        {
+            return Err("run lease renewal response did not preserve the exact grant".to_string());
+        }
+        Ok(())
     }
 
     /// Release a previously-held run lease and surface every configured-node
@@ -186,17 +279,47 @@ impl Coordinator {
         let Some(client) = self.inner.clone() else {
             return Ok(());
         };
-        let (key, lock_id, token) = (
-            lease.key.clone(),
-            lease.lock_id.clone(),
-            lease.fencing_token,
-        );
-        tokio::task::spawn_blocking(move || client.lock_release(&key, &lock_id, token))
+        let handle = lease.as_lock_handle();
+        let expected_key = lease.key.clone();
+        let response = tokio::task::spawn_blocking(move || client.release_lock(&handle))
             .await
             .map_err(|error| format!("run lease release task failed: {error}"))?
             .map_err(|error| format!("run lease release request failed: {error:?}"))?;
+        let output = response
+            .pointer("/result/output")
+            .cloned()
+            .ok_or_else(|| "run lease release response omitted result.output".to_string())?;
+        let released: types::LockReleaseResponse = serde_json::from_value(output)
+            .map_err(|error| format!("invalid run lease release response: {error}"))?;
+        if !released.released {
+            return Err(format!(
+                "fiducia-node rejected exact run lease release: {:?}",
+                released.reason
+            ));
+        }
+        if released.keys.as_deref() != Some(std::slice::from_ref(&expected_key)) {
+            return Err("run lease release response named a different grant".to_string());
+        }
         Ok(())
     }
+}
+
+fn run_lease_from_handle(key: String, ttl_ms: u64, handle: LockHandle) -> Result<RunLease, String> {
+    if handle.keys.as_slice() != std::slice::from_ref(&key)
+        || handle.holder.trim().is_empty()
+        || handle.fencing_token == 0
+        || handle.lease_expires_ms.is_none_or(|expiry| expiry == 0)
+    {
+        return Err("acquired run lease did not contain an exact holder/fenced grant".to_string());
+    }
+    Ok(RunLease {
+        key,
+        holder: handle.holder,
+        fencing_token: handle.fencing_token,
+        lease_expires_ms: handle.lease_expires_ms,
+        ttl_ms,
+        authoritative: true,
+    })
 }
 
 fn parse_idempotency_claim(response: &serde_json::Value) -> Result<bool, String> {
@@ -204,36 +327,6 @@ fn parse_idempotency_claim(response: &serde_json::Value) -> Result<bool, String>
         .pointer("/result/output/claimed")
         .and_then(|value| value.as_bool())
         .ok_or_else(|| "idempotency response omitted result.output.claimed".to_string())
-}
-
-fn parse_run_lease(response: &serde_json::Value, key: String) -> Result<Option<RunLease>, String> {
-    let output = response
-        .pointer("/result/output")
-        .ok_or_else(|| "run lease response omitted result.output".to_string())?;
-    let acquired = output
-        .get("acquired")
-        .and_then(|value| value.as_bool())
-        .ok_or_else(|| "run lease response omitted acquired".to_string())?;
-    if !acquired {
-        return Ok(None);
-    }
-    let fencing_token = output
-        .get("fencing_token")
-        .and_then(|value| value.as_u64())
-        .filter(|token| *token > 0)
-        .ok_or_else(|| "acquired run lease omitted a positive fencing token".to_string())?;
-    let lock_id = output
-        .get("lock_id")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "acquired run lease omitted lock_id".to_string())?
-        .to_string();
-    Ok(Some(RunLease {
-        key,
-        lock_id,
-        fencing_token,
-    }))
 }
 
 #[cfg(test)]
@@ -252,57 +345,70 @@ mod tests {
         status: &'static str,
         body: &'static str,
     ) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
+        serve_responses(vec![(status, body)])
+    }
+
+    fn serve_responses(
+        responses: Vec<(&'static str, &'static str)>,
+    ) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (request_tx, request_rx) = mpsc::channel();
         let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    let count = stream.read(&mut buffer).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let header_end = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4)
+                    .unwrap();
+                let content_length = String::from_utf8_lossy(&request[..header_end])
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                while request.len() < header_end + content_length {
+                    let count = stream.read(&mut buffer).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                request_tx
+                    .send(String::from_utf8(request).unwrap())
+                    .unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
                 .unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 1024];
-            loop {
-                let count = stream.read(&mut buffer).unwrap();
-                if count == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..count]);
-                if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                    break;
-                }
             }
-            let header_end = request
-                .windows(4)
-                .position(|window| window == b"\r\n\r\n")
-                .map(|position| position + 4)
-                .unwrap();
-            let content_length = String::from_utf8_lossy(&request[..header_end])
-                .lines()
-                .find_map(|line| {
-                    line.to_ascii_lowercase()
-                        .strip_prefix("content-length:")
-                        .and_then(|value| value.trim().parse::<usize>().ok())
-                })
-                .unwrap_or(0);
-            while request.len() < header_end + content_length {
-                let count = stream.read(&mut buffer).unwrap();
-                if count == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..count]);
-            }
-            request_tx
-                .send(String::from_utf8(request).unwrap())
-                .unwrap();
-            write!(
-                stream,
-                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
         });
         (format!("http://{address}"), request_rx, server)
+    }
+
+    fn request_json(request: &str) -> serde_json::Value {
+        let (_, body) = request.split_once("\r\n\r\n").unwrap();
+        serde_json::from_str(body).unwrap()
     }
 
     #[test]
@@ -312,7 +418,8 @@ mod tests {
             None,
             "fiducia-lambda-service",
             Some("http://lambda:8083"),
-            "i"
+            "i",
+            false,
         )
         .is_err());
         assert!(Coordinator::new(
@@ -320,7 +427,8 @@ mod tests {
             Some("secret"),
             "bad org",
             Some("http://lambda:8083"),
-            "i"
+            "i",
+            false,
         )
         .is_err());
         assert!(Coordinator::new(
@@ -328,10 +436,12 @@ mod tests {
             Some("secret"),
             "fiducia-lambda-service",
             None,
-            "i"
+            "i",
+            false,
         )
         .is_err());
-        assert!(Coordinator::new(None, None, "fiducia-lambda-service", None, "i").is_ok());
+        assert!(Coordinator::new(None, None, "fiducia-lambda-service", None, "i", false).is_err());
+        assert!(Coordinator::new(None, None, "fiducia-lambda-service", None, "i", true).is_ok());
     }
 
     #[tokio::test]
@@ -344,6 +454,7 @@ mod tests {
             "  fiducia-lambda-service  ",
             Some("  http://lambda-service:8083  "),
             "instance-1",
+            false,
         )
         .unwrap();
         coordinator.register_service().await.unwrap();
@@ -368,6 +479,7 @@ mod tests {
             "fiducia-lambda-service",
             Some("http://lambda-service:8083"),
             "instance-1",
+            false,
         )
         .unwrap();
         assert!(coordinator.register_service().await.is_err());
@@ -375,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn authority_envelopes_are_parsed_strictly() {
+    fn idempotency_authority_envelopes_are_parsed_strictly() {
         assert_eq!(
             parse_idempotency_claim(&json!({"result":{"output":{"claimed":true}}})),
             Ok(true)
@@ -385,25 +497,98 @@ mod tests {
             Ok(false)
         );
         assert!(parse_idempotency_claim(&json!({"claimed":true})).is_err());
+    }
 
-        assert!(parse_run_lease(
-            &json!({"result":{"output":{"acquired":false}}}),
-            "workflow/run/1".to_string()
+    #[tokio::test]
+    async fn run_lease_uses_holder_token_renewal_and_exact_release() {
+        const ACQUIRED: &str = r#"{"committed":true,"result":{"output":{"acquired":true,"keys":["workflow/run/1"],"holder":"instance-1","fencing_token":9,"lease_expires_ms":1000,"revision":1}}}"#;
+        const RENEWED: &str = r#"{"committed":true,"result":{"output":{"renewed":true,"keys":["workflow/run/1"],"holder":"instance-1","fencing_token":9,"lease_expires_ms":2000,"revision":2}}}"#;
+        const RELEASED: &str = r#"{"committed":true,"result":{"output":{"released":true,"keys":["workflow/run/1"],"promoted":[],"revision":3}}}"#;
+        let (url, request_rx, server) = serve_responses(vec![
+            ("200 OK", ACQUIRED),
+            ("200 OK", RENEWED),
+            ("200 OK", RELEASED),
+        ]);
+        let coordinator = Coordinator::new(
+            Some(&url),
+            Some("node-secret"),
+            "fiducia-lambda-service",
+            Some("http://lambda-service:8083"),
+            "instance-1",
+            false,
         )
-        .unwrap()
-        .is_none());
-        assert!(parse_run_lease(
-            &json!({"result":{"output":{"acquired":true,"fencing_token":0,"lock_id":"l"}}}),
-            "workflow/run/1".to_string()
-        )
-        .is_err());
-        let lease = parse_run_lease(
-            &json!({"result":{"output":{"acquired":true,"fencing_token":9,"lock_id":"lock-1"}}}),
-            "workflow/run/1".to_string(),
-        )
-        .unwrap()
         .unwrap();
+        let lease = coordinator
+            .try_lease_run_with_ttl("1", 90)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.holder, "instance-1");
         assert_eq!(lease.fencing_token, 9);
-        assert_eq!(lease.lock_id, "lock-1");
+        assert_eq!(lease.lease_expires_ms, Some(1000));
+
+        coordinator.renew_run_once(&lease).await.unwrap();
+        coordinator.release_run(&lease).await.unwrap();
+
+        let acquire = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(acquire.starts_with("POST /v1/locks/acquire "));
+        let acquire_body = request_json(&acquire);
+        assert_eq!(acquire_body["keys"], json!(["workflow/run/1"]));
+        assert_eq!(acquire_body["holder"], "instance-1");
+        assert_eq!(acquire_body["ttl_ms"], 90);
+        assert_eq!(acquire_body["wait"], false);
+        assert!(acquire_body["request_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("fdc-attempt-")));
+
+        let renew = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(renew.starts_with("POST /v1/locks/renew "));
+        assert_eq!(
+            request_json(&renew),
+            json!({
+                "keys": ["workflow/run/1"],
+                "holder": "instance-1",
+                "fencing_token": 9,
+                "ttl_ms": 90
+            })
+        );
+
+        let release = request_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(release.starts_with("POST /v1/locks/release "));
+        assert_eq!(
+            request_json(&release),
+            json!({"holder": "instance-1", "fencing_token": 9})
+        );
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn renewal_supervisor_fails_closed_when_fenced_authority_is_lost() {
+        const ACQUIRED: &str = r#"{"committed":true,"result":{"output":{"acquired":true,"keys":["workflow/run/long"],"holder":"instance-1","fencing_token":17,"lease_expires_ms":1000,"revision":1}}}"#;
+        const LOST: &str = r#"{"committed":true,"result":{"output":{"renewed":false,"reason":"not_holder","revision":2}}}"#;
+        let (url, _request_rx, server) =
+            serve_responses(vec![("200 OK", ACQUIRED), ("200 OK", LOST)]);
+        let coordinator = Coordinator::new(
+            Some(&url),
+            Some("node-secret"),
+            "fiducia-lambda-service",
+            Some("http://lambda-service:8083"),
+            "instance-1",
+            false,
+        )
+        .unwrap();
+        let lease = coordinator
+            .try_lease_run_with_ttl("long", 30)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            coordinator.maintain_run_lease(lease),
+        )
+        .await
+        .expect("renewal must remain bounded");
+        assert!(result.is_err());
+        server.join().unwrap();
     }
 }

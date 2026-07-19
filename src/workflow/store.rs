@@ -597,6 +597,7 @@ mod tests {
             fiducia_node_internal_secret: None,
             fiducia_node_org_id: crate::config::DEFAULT_FIDUCIA_NODE_ORG_ID.into(),
             fiducia_service_address: None,
+            allow_local_coordination: true,
             child_idle_ms: 1000,
             child_timeout_ms: 1000,
         }

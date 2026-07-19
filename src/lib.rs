@@ -10,7 +10,8 @@
 //!     (`activity` / `sleep` / `waitSignal`) over a persistent [`workflow::Store`].
 //!
 //! Messaging is NATS (JetStream for durable lifecycle events); coordination is
-//! **optional** fiducia-node ([`coord`]) reached through `fiducia-client`. See the
+//! fiducia-node ([`coord`]) reached through `fiducia-client` (or an explicitly
+//! enabled local-development mode). See the
 //! `messaging-architecture` project note.
 
 pub mod api_docs;

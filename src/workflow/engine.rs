@@ -311,9 +311,26 @@ impl Engine {
             }
         };
 
-        let result = self
-            .do_process_run(&run_id, &view, lease.fencing_token)
-            .await;
+        let result = {
+            let processing = self.do_process_run(&run_id, &view, lease.fencing_token);
+            let renewal = self.coord.maintain_run_lease(lease.clone());
+            tokio::pin!(processing);
+            tokio::pin!(renewal);
+            tokio::select! {
+                // If completion and authority loss become visible together,
+                // prefer the authority result and cancel the work fail-closed.
+                biased;
+                renewal = &mut renewal => {
+                    WfMetrics::inc(&self.metrics.worker_exceptions);
+                    let error = renewal
+                        .err()
+                        .unwrap_or_else(|| "run lease renewal stopped unexpectedly".to_string());
+                    tracing::error!(%error, run_id, "authoritative run lease lost; cancelling workflow step");
+                    return;
+                }
+                result = &mut processing => result,
+            }
+        };
         if let Err(err) = result {
             WfMetrics::inc(&self.metrics.worker_exceptions);
             tracing::error!(run_id, %err, "workflow step crashed");

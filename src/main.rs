@@ -11,10 +11,8 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    fiducia_telemetry::init("fiducia-lambda-service");
-    let result = run().await;
-    fiducia_telemetry::shutdown();
-    result
+    let _telemetry = fiducia_telemetry::init("fiducia-lambda-service");
+    run().await
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -32,7 +30,7 @@ async fn run() -> anyhow::Result<()> {
 
     let metrics = Arc::new(Metrics::default());
     let nats = Arc::new(Nats::new(&config, metrics.clone()));
-    // An absent node URL is an explicit single-process mode. Once a node is
+    // Local authority requires an explicit development opt-in. Once a node is
     // configured, startup requires its internal credentials and registration
     // must succeed so a broken authority boundary cannot degrade silently.
     let coord = Coordinator::new(
@@ -41,6 +39,7 @@ async fn run() -> anyhow::Result<()> {
         &config.fiducia_node_org_id,
         config.fiducia_service_address.as_deref(),
         instance_id.clone(),
+        config.allow_local_coordination,
     )
     .map_err(anyhow::Error::msg)?;
     coord.register_service().await.map_err(anyhow::Error::msg)?;

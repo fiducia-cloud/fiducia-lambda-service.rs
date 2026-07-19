@@ -9,6 +9,10 @@ pub const DEFAULT_FIDUCIA_NODE_ORG_ID: &str = "fiducia-lambda-service";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("FIDUCIA_NODE_URL/FIDUCIA_BASE_URL is required unless FIDUCIA_ALLOW_LOCAL_COORDINATION=true explicitly selects single-process development mode")]
+    MissingNodeUrl,
+    #[error("FIDUCIA_ALLOW_LOCAL_COORDINATION must be one of true/false, 1/0, yes/no, or on/off")]
+    InvalidLocalCoordinationFlag,
     #[error("FIDUCIA_NODE_INTERNAL_SECRET (or FIDUCIA_INTERNAL_SECRET) is required when FIDUCIA_NODE_URL/FIDUCIA_BASE_URL is configured")]
     MissingNodeSecret,
     #[error("FIDUCIA_NODE_ORG_ID must be non-empty, at most 128 bytes, and contain no whitespace or control characters")]
@@ -35,8 +39,8 @@ pub struct Config {
     pub nats_url: Option<String>,
     /// Subject workflow lifecycle events are published to.
     pub workflow_event_subject: String,
-    /// Optional direct fiducia-node endpoint. `FIDUCIA_NODE_URL` is preferred;
-    /// `FIDUCIA_BASE_URL` remains a compatibility alias.
+    /// Direct fiducia-node endpoint. Required unless explicit local-development
+    /// coordination is enabled; `FIDUCIA_BASE_URL` remains a compatibility alias.
     pub fiducia_base_url: Option<String>,
     /// Required cluster secret whenever the direct node endpoint is configured.
     pub fiducia_node_internal_secret: Option<String>,
@@ -44,6 +48,8 @@ pub struct Config {
     pub fiducia_node_org_id: String,
     /// Reachable address published in fiducia-node service discovery.
     pub fiducia_service_address: Option<String>,
+    /// Explicit development-only opt-in to synthetic, single-process authority.
+    pub allow_local_coordination: bool,
     /// Default idle window before a warm child process is reaped (ms).
     pub child_idle_ms: u64,
     /// Default hard per-invocation timeout (ms).
@@ -63,6 +69,21 @@ fn env_or(key: &str, default: &str) -> String {
 
 fn env_num<T: std::str::FromStr>(key: &str, default: T) -> T {
     env_opt(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+fn env_bool(key: &str, default: bool) -> Result<bool, ConfigError> {
+    let Some(value) = env_opt(key) else {
+        return Ok(default);
+    };
+    parse_bool(&value)
+}
+
+fn parse_bool(value: &str) -> Result<bool, ConfigError> {
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError::InvalidLocalCoordinationFlag),
+    }
 }
 
 impl Config {
@@ -91,11 +112,13 @@ impl Config {
             env_opt("FIDUCIA_NODE_INTERNAL_SECRET").or_else(|| env_opt("FIDUCIA_INTERNAL_SECRET"));
         let fiducia_node_org_id = env_or("FIDUCIA_NODE_ORG_ID", DEFAULT_FIDUCIA_NODE_ORG_ID);
         let fiducia_service_address = env_opt("FIDUCIA_SERVICE_ADDRESS");
+        let allow_local_coordination = env_bool("FIDUCIA_ALLOW_LOCAL_COORDINATION", false)?;
         validate_node_coordination(
             fiducia_base_url.as_deref(),
             fiducia_node_internal_secret.as_deref(),
             &fiducia_node_org_id,
             fiducia_service_address.as_deref(),
+            allow_local_coordination,
         )?;
 
         Ok(Config {
@@ -113,6 +136,7 @@ impl Config {
             fiducia_node_internal_secret,
             fiducia_node_org_id,
             fiducia_service_address,
+            allow_local_coordination,
             child_idle_ms: env_num("LAMBDA_CHILD_IDLE_MS", 300_000),
             child_timeout_ms: env_num("LAMBDA_CHILD_TIMEOUT_MS", 30_000),
         })
@@ -128,16 +152,22 @@ fn validate_node_coordination(
     internal_secret: Option<&str>,
     org_id: &str,
     service_address: Option<&str>,
+    allow_local_coordination: bool,
 ) -> Result<(), ConfigError> {
     if base_url.is_none() {
-        return Ok(());
+        return if allow_local_coordination {
+            Ok(())
+        } else {
+            Err(ConfigError::MissingNodeUrl)
+        };
     }
-    if internal_secret.is_none() {
+    if internal_secret.is_none_or(|value| value.trim().is_empty()) {
         return Err(ConfigError::MissingNodeSecret);
     }
-    if service_address.is_none() {
+    if service_address.is_none_or(|value| value.trim().is_empty()) {
         return Err(ConfigError::MissingServiceAddress);
     }
+    let org_id = org_id.trim();
     if org_id.is_empty()
         || org_id.len() > 128
         || org_id
@@ -170,7 +200,8 @@ mod tests {
                 Some("http://node"),
                 None,
                 DEFAULT_FIDUCIA_NODE_ORG_ID,
-                Some("http://lambda:8083")
+                Some("http://lambda:8083"),
+                false,
             ),
             Err(ConfigError::MissingNodeSecret)
         );
@@ -179,7 +210,8 @@ mod tests {
                 Some("http://node"),
                 Some("secret"),
                 "bad org",
-                Some("http://lambda:8083")
+                Some("http://lambda:8083"),
+                false,
             ),
             Err(ConfigError::InvalidNodeOrg)
         );
@@ -188,7 +220,8 @@ mod tests {
                 Some("http://node"),
                 Some("secret"),
                 DEFAULT_FIDUCIA_NODE_ORG_ID,
-                None
+                None,
+                false,
             ),
             Err(ConfigError::MissingServiceAddress)
         );
@@ -196,9 +229,29 @@ mod tests {
             Some("http://node"),
             Some("secret"),
             DEFAULT_FIDUCIA_NODE_ORG_ID,
-            Some("http://lambda:8083")
+            Some("http://lambda:8083"),
+            false,
         )
         .is_ok());
-        assert!(validate_node_coordination(None, None, DEFAULT_FIDUCIA_NODE_ORG_ID, None).is_ok());
+        assert_eq!(
+            validate_node_coordination(None, None, DEFAULT_FIDUCIA_NODE_ORG_ID, None, false,),
+            Err(ConfigError::MissingNodeUrl)
+        );
+        assert!(
+            validate_node_coordination(None, None, DEFAULT_FIDUCIA_NODE_ORG_ID, None, true,)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn local_coordination_flag_is_strict() {
+        assert_eq!(env_bool("FIDUCIA_TEST_UNSET_BOOL", false), Ok(false));
+        assert_eq!(env_bool("FIDUCIA_TEST_UNSET_BOOL", true), Ok(true));
+        assert_eq!(parse_bool("true"), Ok(true));
+        assert_eq!(parse_bool("OFF"), Ok(false));
+        assert_eq!(
+            parse_bool("sometimes"),
+            Err(ConfigError::InvalidLocalCoordinationFlag)
+        );
     }
 }

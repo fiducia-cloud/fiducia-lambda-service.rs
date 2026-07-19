@@ -59,6 +59,12 @@ aliases = ["fiducia-service-address"]
 type = "string"
 help = "Reachable address registered with fiducia-node when coordination is enabled."
 
+[flags.allow-local-coordination]
+env = "FIDUCIA_ALLOW_LOCAL_COORDINATION"
+aliases = ["allow-local-coordination"]
+type = "boolean"
+help = "Explicitly allow synthetic single-process coordination for local development (default false)."
+
 [flags.workflow-engine-enabled]
 env = "WORKFLOW_ENGINE_ENABLED"
 aliases = ["workflow-engine-enabled"]

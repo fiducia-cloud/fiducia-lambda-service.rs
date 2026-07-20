@@ -20,3 +20,6 @@ Thumbs.db
 .direnv/
 target/
 node_modules/
+
+# direnv-generated Nix dev-shell cache
+.direnv/

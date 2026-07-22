@@ -36,7 +36,7 @@ FROM docker.io/library/node:26-bookworm-slim@sha256:2d49d876e96237d76de412761cf0
 # Playwright supplies the pinned Chromium build and its OS libraries. Replace
 # its bundled Node with Node 25 so browser children can use the stable network
 # permission gate in addition to child-process and read-only filesystem grants.
-FROM mcr.microsoft.com/playwright:v1.56.0-noble@sha256:35246d87a7c88ea9b771c65d33171b2611b02a8253b4b12ce6f94376c55f99f2
+FROM mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
 LABEL org.fiducia.runtime-profile="tool-runner-nonroot"
 COPY --from=node-runtime /usr/local/ /usr/local/
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client ca-certificates \

@@ -31,7 +31,7 @@ RUN git init fiducia-telemetry.rs \
 COPY fiducia-lambda-service.rs/ fiducia-lambda-service.rs/
 RUN cargo build --release --locked --manifest-path fiducia-lambda-service.rs/Cargo.toml
 
-FROM docker.io/library/node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS node-runtime
+FROM docker.io/library/node:26-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS node-runtime
 
 # Playwright supplies the pinned Chromium build and its OS libraries. Replace
 # its bundled Node with Node 25 so browser children can use the stable network

@@ -33,8 +33,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 parking_lot = "0.12"
 regex = "1"
 # NATS is the cross-service message bus (workflow events, container-pool
-# dispatch). An external NATS instance is assumed to exist.
-async-nats = { version = "0.50.0", default-features = false, features = ["jetstream", "ring"] }
+# dispatch). An external NATS instance is assumed to exist. `nkeys` enables
+# `NATS_CREDS_FILE` credentials so secrets do not ride the URL userinfo.
+async-nats = { version = "0.50.0", default-features = false, features = ["jetstream", "ring", "nkeys"] }
 bytes = "1"
 
 # Shared, generated payload/error contract — the one source of truth for the

@@ -38,6 +38,14 @@ counters! {
     nats_serialization_failures_total,
     nats_unconfigured_skips_total,
     nats_unavailable_drops_total,
+    function_definitions_created_total,
+    function_definitions_updated_total,
+    function_definitions_deleted_total,
+    function_definitions_paused_total,
+    function_definition_checks_total,
+    function_definition_check_failures_total,
+    function_invocation_failures_total,
+    tenant_auth_rejections_total,
 }
 
 fn g(a: &AtomicU64) -> u64 {
@@ -173,6 +181,62 @@ impl Metrics {
             "NATS publishes dropped while the configured broker was unavailable.",
             "counter",
             g(&self.nats_unavailable_drops_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_definitions_created_total",
+            "Tenant-scoped function definitions created.",
+            "counter",
+            g(&self.function_definitions_created_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_definitions_updated_total",
+            "Tenant-scoped function definitions updated.",
+            "counter",
+            g(&self.function_definitions_updated_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_definitions_deleted_total",
+            "Tenant-scoped function definitions soft-deleted.",
+            "counter",
+            g(&self.function_definitions_deleted_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_definitions_paused_total",
+            "Tenant-scoped function definitions paused.",
+            "counter",
+            g(&self.function_definitions_paused_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_definition_checks_total",
+            "Sandbox checks requested for tenant function definitions.",
+            "counter",
+            g(&self.function_definition_checks_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_definition_check_failures_total",
+            "Sandbox checks that failed or rejected a tenant function definition.",
+            "counter",
+            g(&self.function_definition_check_failures_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_function_invocation_failures_total",
+            "Tenant function invocations that failed.",
+            "counter",
+            g(&self.function_invocation_failures_total),
+        );
+        block(
+            &mut out,
+            "fiducia_lambda_tenant_auth_rejections_total",
+            "Requests rejected for missing service authentication or tenant scope.",
+            "counter",
+            g(&self.tenant_auth_rejections_total),
         );
         block(
             &mut out,

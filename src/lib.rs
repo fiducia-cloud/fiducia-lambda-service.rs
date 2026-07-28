@@ -19,6 +19,7 @@ pub mod child_runner;
 pub mod config;
 pub mod coord;
 pub mod definition;
+pub mod function_control;
 pub mod http;
 pub mod messaging;
 pub mod metrics;

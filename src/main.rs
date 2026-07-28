@@ -62,6 +62,7 @@ async fn run() -> anyhow::Result<()> {
         child,
         engine,
         coord: coord.clone(),
+        metrics,
     };
 
     info!(%addr, "listening");

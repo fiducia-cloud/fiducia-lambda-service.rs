@@ -86,6 +86,8 @@ fn sensitive_json_response(status: StatusCode, body: String) -> Response {
         .into_response()
 }
 
+#[allow(clippy::result_large_err)]
+// Axum handlers return Response directly so callers can preserve status, headers, and no-store policy.
 fn organization_id(headers: &HeaderMap) -> Result<String, Response> {
     let Some(value) = headers
         .get(function_control::ORG_HEADER)
@@ -364,6 +366,8 @@ async fn function_get(
     }
 }
 
+#[allow(clippy::result_large_err)]
+// Keep malformed-body handling local to the HTTP boundary rather than leaking transport errors inward.
 fn parse_function_input(body: &Bytes) -> Result<FunctionDefinitionInput, Response> {
     serde_json::from_slice(body).map_err(|error| {
         tracing::debug!(%error, "rejected invalid function definition request");

@@ -113,12 +113,9 @@ impl ChildRunner {
     ) -> Result<String, String> {
         let request = runtime::normalize_request_payload(payload);
         self.reap_idle().await;
-        let def = crate::definition::load_function_definition_for_org(
-            &self.config,
-            identifier,
-            org_id,
-        )
-        .await?;
+        let def =
+            crate::definition::load_function_definition_for_org(&self.config, identifier, org_id)
+                .await?;
         self.invoke_loaded_definition(
             fallback_command,
             identifier,

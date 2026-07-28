@@ -339,10 +339,9 @@ fn metadata_with_scope(clean: &CleanFunctionDefinition, org_id: &str) -> Value {
 }
 
 fn database_url(config: &Config) -> Result<&str, FunctionControlError> {
-    config
-        .database_url
-        .as_deref()
-        .ok_or_else(|| FunctionControlError::Unavailable("LAMBDA_DATABASE_URL is unset".to_string()))
+    config.database_url.as_deref().ok_or_else(|| {
+        FunctionControlError::Unavailable("LAMBDA_DATABASE_URL is unset".to_string())
+    })
 }
 
 async fn parse_record(
@@ -489,11 +488,7 @@ pub async fn update(
     parse_record(config, sql).await
 }
 
-pub async fn delete(
-    config: &Config,
-    org_id: &str,
-    id: Uuid,
-) -> Result<(), FunctionControlError> {
+pub async fn delete(config: &Config, org_id: &str, id: Uuid) -> Result<(), FunctionControlError> {
     let sql = format!(
         "update lambda_functions set is_soft_deleted = true, status = 'archived', updated_at = now() \
          where id = '{}'::uuid and is_soft_deleted = false and meta_data->>'{}' = {} \
@@ -647,5 +642,4 @@ mod tests {
         assert!(validate_function_id("00000000-0000-4000-8000-000000000001").is_ok());
         assert!(validate_function_id("shared-slug").is_err());
     }
-
 }

@@ -15,9 +15,9 @@ use crate::api_docs;
 use crate::child_runner::ChildRunner;
 use crate::config::{Config, DEFAULT_NODEJS_HOST_COMMAND};
 use crate::coord::Coordinator;
-use crate::workflow::Engine;
 use crate::function_control::{self, FunctionControlError, FunctionDefinitionInput};
 use crate::metrics::Metrics;
+use crate::workflow::Engine;
 
 /// Shared application state handed to every handler.
 #[derive(Clone)]
@@ -39,22 +39,15 @@ pub fn router(state: AppState) -> Router {
         .route("/docs/api", get(api_docs::html))
         .route("/api/docs", get(api_docs::html))
         .route("/api/docs.json", get(api_docs::json))
-        .route(
-            "/v1/functions",
-            get(function_list).post(function_create),
-        )
+        .route("/v1/functions", get(function_list).post(function_create))
         .route(
             "/v1/functions/{function_id}",
-            get(function_get).put(function_update).delete(function_delete),
+            get(function_get)
+                .put(function_update)
+                .delete(function_delete),
         )
-        .route(
-            "/v1/functions/{function_id}/check",
-            post(function_check),
-        )
-        .route(
-            "/v1/functions/{function_id}/pause",
-            post(function_pause),
-        )
+        .route("/v1/functions/{function_id}/check", post(function_check))
+        .route("/v1/functions/{function_id}/pause", post(function_pause))
         .route("/invoke/{function_id}", post(invoke))
         .route("/check", post(check))
         .route("/destroy/{reuse_key}", post(destroy))
@@ -122,9 +115,10 @@ fn function_control_error(error: FunctionControlError) -> Response {
         FunctionControlError::NotFound => {
             json_response(StatusCode::NOT_FOUND, ok_err("function not found"))
         }
-        FunctionControlError::Conflict => {
-            json_response(StatusCode::CONFLICT, ok_err("function changed during check"))
-        }
+        FunctionControlError::Conflict => json_response(
+            StatusCode::CONFLICT,
+            ok_err("function changed during check"),
+        ),
         FunctionControlError::Unavailable(detail) => {
             tracing::error!(%detail, "lambda function definition store unavailable");
             json_response(
@@ -291,11 +285,13 @@ async fn invoke(
         Err(err) => {
             st.metrics.function_invocation_failures_total(1);
             tracing::warn!(function.id = %function_id, %err, "tenant function invocation failed");
-            json_response(StatusCode::BAD_GATEWAY, ok_err("function invocation failed"))
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                ok_err("function invocation failed"),
+            )
         }
     }
 }
-
 
 #[derive(serde::Deserialize)]
 struct FunctionListQuery {
@@ -383,11 +379,7 @@ fn parse_function_input(body: &Bytes) -> Result<FunctionDefinitionInput, Respons
     skip_all,
     fields(fiducia.org_id = tracing::field::Empty, function.runtime = tracing::field::Empty)
 )]
-async fn function_create(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+async fn function_create(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     if let Some(response) = authorization_error(&st.config, &headers) {
         st.metrics.tenant_auth_rejections_total(1);
         return response;
@@ -584,30 +576,29 @@ async fn function_check(
             st.metrics.function_definition_check_failures_total(1);
             sensitive_json_response(StatusCode::UNPROCESSABLE_ENTITY, output)
         }
-        Ok(output) => match function_control::activate_checked(&st.config, &org_id, &record).await {
-            Ok(function) => {
-                tracing::info!(function.id = %function.id, "checked customer function activated");
-                let check = serde_json::from_str::<serde_json::Value>(&output)
-                    .unwrap_or_else(|_| serde_json::json!({ "output": output }));
-                sensitive_json_response(
-                    StatusCode::OK,
-                    serde_json::json!({
-                        "ok": true,
-                        "check": check,
-                        "function": function,
-                    })
-                    .to_string(),
-                )
+        Ok(output) => {
+            match function_control::activate_checked(&st.config, &org_id, &record).await {
+                Ok(function) => {
+                    tracing::info!(function.id = %function.id, "checked customer function activated");
+                    let check = serde_json::from_str::<serde_json::Value>(&output)
+                        .unwrap_or_else(|_| serde_json::json!({ "output": output }));
+                    sensitive_json_response(
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "ok": true,
+                            "check": check,
+                            "function": function,
+                        })
+                        .to_string(),
+                    )
+                }
+                Err(error) => function_control_error(error),
             }
-            Err(error) => function_control_error(error),
-        },
+        }
         Err(error) => {
             st.metrics.function_definition_check_failures_total(1);
             tracing::warn!(%error, function.id = %function_id, "customer function check failed");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                ok_err("function check failed"),
-            )
+            json_response(StatusCode::BAD_GATEWAY, ok_err("function check failed"))
         }
     }
 }

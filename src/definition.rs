@@ -96,7 +96,11 @@ fn lambda_definition_sql(kind: &IdentifierKind, identifier: &str, org_id: Option
 
 /// Run one single-statement psql command with a hard five-second cap and a
 /// caller-provided output ceiling (`run_psql/3` + `collect_port/4`).
-pub(crate) async fn run_psql(database_url: &str, sql: &str, max_output_bytes: usize) -> Result<String, String> {
+pub(crate) async fn run_psql(
+    database_url: &str,
+    sql: &str,
+    max_output_bytes: usize,
+) -> Result<String, String> {
     let child = Command::new("psql")
         .arg(database_url)
         .args(["-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql])

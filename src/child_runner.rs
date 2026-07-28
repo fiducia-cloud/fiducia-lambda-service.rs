@@ -100,6 +100,33 @@ impl ChildRunner {
         .await
     }
 
+    /// Tenant-scoped HTTP invocation. The organization ownership predicate is
+    /// evaluated in Postgres before the definition or its source is loaded.
+    pub async fn invoke_for_org(
+        self: &Arc<Self>,
+        fallback_command: &str,
+        identifier: &str,
+        org_id: &str,
+        payload: &str,
+        idle_ms: u64,
+        timeout_ms: u64,
+    ) -> Result<String, String> {
+        let request = runtime::normalize_request_payload(payload);
+        self.reap_idle().await;
+        let def =
+            crate::definition::load_function_definition_for_org(&self.config, identifier, org_id)
+                .await?;
+        self.invoke_loaded_definition(
+            fallback_command,
+            identifier,
+            &def,
+            &request,
+            idle_ms,
+            timeout_ms,
+        )
+        .await
+    }
+
     /// `POST /check` — validate a definition by running a check-only invocation.
     pub async fn check_definition(
         self: &Arc<Self>,

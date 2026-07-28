@@ -1,4 +1,4 @@
-name: apply cron function control plane
+name: clean cron implementation transfer
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  clean:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -17,19 +17,12 @@ jobs:
         with:
           ref: agent/cron-function-control-plane
           fetch-depth: 0
-      - name: Apply audited implementation
+      - name: Remove one-shot transfer artifacts
         shell: bash
         run: |
           set -euo pipefail
-          cat .agent/cron-payload/part-* | base64 -d > /tmp/lambda-cron-implementation.tgz
-          tar -xzf /tmp/lambda-cron-implementation.tgz
-          git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Cargo.toml src/lib.rs src/definition.rs src/child_runner.rs src/function_control.rs src/http.rs src/main.rs src/metrics.rs
-          if git diff --cached --quiet; then
-            echo 'implementation already applied'
-            exit 0
-          fi
-          git commit -m 'feat: add tenant-safe cron function control plane'
+          git rm -r .agent/cron-payload .github/workflows/agent-cron-source.yml
+          git commit -m 'chore: remove cron implementation transfer artifacts'
           git push origin HEAD:agent/cron-function-control-plane

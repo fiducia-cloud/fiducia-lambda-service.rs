@@ -15,6 +15,9 @@ Two subsystems share one process:
 - **Workflow engine** — a Temporal-style **durable step machine** (`activity` /
   `sleep` / `waitSignal`) over a persistent store. A scheduler polls for due
   runs and advances each by one step per tick; a crash resumes from the store.
+- **Customer function control plane** — tenant-scoped CRUD for cron function
+  definitions. Source remains in Postgres and is activated only after a
+  successful sandbox check; fiducia-node stores only an opaque function UUID.
 
 ## Architecture
 
@@ -44,12 +47,20 @@ NATS is delivery; fiducia-node is authority.
 ## HTTP API
 
 All mutating routes require one of `X-Server-Auth` / `X-Lambda-Runner-Auth` /
-`X-Agent-Auth` matching the configured secret.
+`X-Agent-Auth` matching the configured secret. Customer function routes also
+require a validated `X-Fiducia-Org-Id`; the organization predicate is evaluated
+inside every Postgres read and write so cross-tenant UUIDs are indistinguishable
+from missing functions. Function bodies are returned only on this authenticated,
+tenant-scoped service-to-service surface and responses use `Cache-Control: no-store`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/invoke/{function_id}` | Invoke a stored function by UUID or slug |
-| POST | `/check` | Validate a definition (check-only run) |
+| GET, POST | `/v1/functions` | List or create tenant-owned cron functions |
+| GET, PUT, DELETE | `/v1/functions/{function_id}` | Read, replace, or soft-delete one tenant function |
+| POST | `/v1/functions/{function_id}/check` | Sandbox-check the current draft and atomically activate it if unchanged |
+| POST | `/v1/functions/{function_id}/pause` | Disable future invocation without deleting source |
+| POST | `/invoke/{function_id}` | Invoke an active tenant function; requires `X-Fiducia-Org-Id` |
+| POST | `/check` | Validate an operator-supplied definition (legacy/internal check-only route) |
 | POST | `/destroy/{reuse_key}` | Tear down a warm child worker |
 | POST | `/workflows/start` | Start a workflow run |
 | GET | `/workflows/runs` | List runs (`?definition=&limit=`) |
@@ -57,6 +68,47 @@ All mutating routes require one of `X-Server-Auth` / `X-Lambda-Runner-Auth` /
 | POST | `/workflows/runs/{run_id}/signal` | Deliver a signal |
 | POST | `/workflows/runs/{run_id}/cancel` | Cancel a run |
 | GET | `/healthz`, `/metrics`, `/docs/api` | Ops surfaces (public) |
+
+## Cron custom-code lifecycle
+
+Customer-defined cron code is deliberately separated from the replicated
+scheduler state:
+
+1. `POST /v1/functions` stores a **draft** definition in Postgres under a
+   generated physical UUID/slug and reserved organization metadata.
+2. `POST /v1/functions/{id}/check` executes a check-only request through the
+   existing bounded child-runner sandbox. Activation uses an optimistic update
+   over the exact source/runtime/limits that were checked; concurrent edits stay
+   in draft and return `409 Conflict`.
+3. fiducia-node schedules `target.kind=function` with only the opaque function
+   UUID. At fire time it authenticates to this service, propagates the tenant
+   header and W3C trace context, and uses its stable run idempotency key.
+4. `/invoke/{id}` loads only an **active**, non-deleted function owned by that
+   tenant. The child runner enforces invocation time and output ceilings.
+
+The customer surface currently accepts managed `nodejs` code only. It rejects
+customer-selected entry commands, host shell runtimes, browser runtimes, and
+container execution. Broader runtimes can be added later behind separately
+reviewed sandbox and image policies rather than granting arbitrary process
+execution through the control plane.
+
+Request example:
+
+```http
+POST /v1/functions HTTP/1.1
+X-Server-Auth: <service secret>
+X-Fiducia-Org-Id: acme
+Content-Type: application/json
+
+{
+  "slug": "daily-rollup",
+  "displayName": "Daily rollup",
+  "runtime": "nodejs",
+  "functionBody": "return { ok: true, request };",
+  "maxRunMs": 30000,
+  "labels": ["billing"]
+}
+```
 
 ## Build & run
 
@@ -163,7 +215,14 @@ per invocation.
 - **Auth:** every mutating route requires one of `X-Server-Auth` /
   `X-Lambda-Runner-Auth` / `X-Agent-Auth` matching the configured secret; the
   guard is **fail-closed** — requests are rejected when the secret is
-  unconfigured or mismatched.
+  unconfigured or mismatched. Customer definition and invocation routes also
+  require a valid tenant header and put the tenant predicate in the database
+  statement, not merely in HTTP middleware.
+- **Customer code:** source is capped at 256 KiB, stored as draft, and cannot be
+  activated until a bounded sandbox check succeeds. User-provided shell commands,
+  host/container selection, secrets, and reserved tenancy metadata are rejected.
+  Definition SQL values are hexadecimal-encoded before interpolation into the
+  single-statement `psql` command.
 - **Coordination authority:** direct node calls attach both
   `x-fiducia-internal-auth` and the distinct `fiducia-lambda-service` org scope.
   Successful run leases retain the exact holder, positive fencing token, expiry,

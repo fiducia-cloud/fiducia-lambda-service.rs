@@ -70,23 +70,8 @@ jobs:
         working-directory: repo
         run: cargo fmt --all -- --check
       - name: Clippy
-        id: clippy
-        continue-on-error: true
         working-directory: repo
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo clippy --all-targets --all-features --locked -- -D warnings 2>&1 | tee /tmp/fiducia-lambda-clippy.log
-      - name: Upload Clippy diagnostic
-        if: steps.clippy.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: fiducia-lambda-clippy-${{ github.run_id }}
-          path: /tmp/fiducia-lambda-clippy.log
-          if-no-files-found: error
-      - name: Enforce Clippy result
-        if: steps.clippy.outcome == 'failure'
-        run: exit 1
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Test
         working-directory: repo
         run: cargo test --all-features --locked

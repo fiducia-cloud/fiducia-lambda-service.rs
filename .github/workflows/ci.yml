@@ -37,7 +37,7 @@ jobs:
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-clients
-          ref: 5cd1a537f7ab98808ece4cdd09723be0bf49ce8b
+          ref: d17e67e1c531ff8e1bc427f21a8bcd0ff57cd214
           path: fiducia-clients
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

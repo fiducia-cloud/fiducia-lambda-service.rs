@@ -178,7 +178,7 @@ accepted only through environment variables, never command-line flags.
 CI and the container build consume immutable, verified sibling revisions:
 
 - `fiducia-clients` at `5cd1a537f7ab98808ece4cdd09723be0bf49ce8b`
-- `fiducia-interfaces` at `2c5c806174e067fbe83ad48b724366323ba390a2`
+- `fiducia-interfaces` at `bd718cd72d72aa330534f3688f8fb1ce90c19d10`
 - `fiducia-messaging.rs` at `d3e88b3692bfdb4d387a9aa70fb7af5ecf200c49`
 - `fiducia-telemetry.rs` at `1128b3f9ab4fb003e918f61ab7743fd5c6c62fc9`
 

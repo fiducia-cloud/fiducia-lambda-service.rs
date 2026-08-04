@@ -31,12 +31,12 @@ RUN git init fiducia-telemetry.rs \
 COPY fiducia-lambda-service.rs/ fiducia-lambda-service.rs/
 RUN cargo build --release --locked --manifest-path fiducia-lambda-service.rs/Cargo.toml
 
-FROM docker.io/library/node:26-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS node-runtime
+FROM docker.io/library/node:26-bookworm-slim@sha256:9e6f9357d371591e32ab6f2d8a26d63bdd0d17c29eee3f4f3e7e454d9634bf73 AS node-runtime
 
 # Playwright supplies the pinned Chromium build and its OS libraries. Replace
 # its bundled Node with Node 25 so browser children can use the stable network
 # permission gate in addition to child-process and read-only filesystem grants.
-FROM mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
 LABEL org.fiducia.runtime-profile="tool-runner-nonroot"
 COPY --from=node-runtime /usr/local/ /usr/local/
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client ca-certificates \

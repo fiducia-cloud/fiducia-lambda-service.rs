@@ -525,7 +525,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -549,7 +549,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 name = "fiducia-client"
 version = "0.1.0"
 dependencies = [
- "fiducia-interfaces 0.1.0 (git+https://github.com/fiducia-cloud/fiducia-interfaces.git?rev=bd718cd72d72aa330534f3688f8fb1ce90c19d10)",
+ "fiducia-interfaces 0.1.0 (git+https://github.com/fiducia-cloud/fiducia-interfaces.git?rev=ee8fe09f846f5a776d156c0b0d0d15582c8bd539)",
  "serde_json",
  "ureq",
  "uuid",
@@ -567,9 +567,8 @@ dependencies = [
 [[package]]
 name = "fiducia-interfaces"
 version = "0.1.0"
-source = "git+https://github.com/fiducia-cloud/fiducia-interfaces.git?rev=bd718cd72d72aa330534f3688f8fb1ce90c19d10#bd718cd72d72aa330534f3688f8fb1ce90c19d10"
+source = "git+https://github.com/fiducia-cloud/fiducia-interfaces?rev=e3dba39566e036ad61de91e2e6c1d625ec2b5411#e3dba39566e036ad61de91e2e6c1d625ec2b5411"
 dependencies = [
- "jsonschema",
  "serde",
  "serde_json",
 ]
@@ -577,8 +576,9 @@ dependencies = [
 [[package]]
 name = "fiducia-interfaces"
 version = "0.1.0"
-source = "git+https://github.com/fiducia-cloud/fiducia-interfaces?rev=e3dba39566e036ad61de91e2e6c1d625ec2b5411#e3dba39566e036ad61de91e2e6c1d625ec2b5411"
+source = "git+https://github.com/fiducia-cloud/fiducia-interfaces.git?rev=ee8fe09f846f5a776d156c0b0d0d15582c8bd539#ee8fe09f846f5a776d156c0b0d0d15582c8bd539"
 dependencies = [
+ "jsonschema",
  "serde",
  "serde_json",
 ]
@@ -816,9 +816,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.15"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
+checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
 dependencies = [
  "atomic-waker",
  "bytes",

@@ -39,25 +39,25 @@ jobs:
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-interfaces
-          ref: bd718cd72d72aa330534f3688f8fb1ce90c19d10
+          ref: 9b483dd31195692dcee774d6b7a36e2fbe8662a9
           path: fiducia-interfaces
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-clients
-          ref: d17e67e1c531ff8e1bc427f21a8bcd0ff57cd214
+          ref: 79ef2b6c1ed4e0bf01e768539b3a3408b02da2e3
           path: fiducia-clients
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-messaging.rs
-          ref: d3e88b3692bfdb4d387a9aa70fb7af5ecf200c49
+          ref: 821730228ffd02e33bf49c68d6a7be8faa0e0613
           path: fiducia-messaging.rs
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           repository: fiducia-cloud/fiducia-telemetry.rs
-          ref: 1128b3f9ab4fb003e918f61ab7743fd5c6c62fc9
+          ref: 6873ef7c828bd4139ecdd08789b35a18c7cc405b
           path: fiducia-telemetry.rs
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:

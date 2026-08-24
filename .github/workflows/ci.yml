@@ -23,6 +23,14 @@ jobs:
           persist-credentials: false
           path: repo
           submodules: recursive
+      - name: Authenticate pinned cross-org contract dependency
+        shell: bash
+        env:
+          CROSS_REPO_GITHUB_TOKEN: ${{ secrets.CROSS_REPO_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CROSS_REPO_GITHUB_TOKEN}"
+          git config --global url."https://x-access-token:${CROSS_REPO_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
       - name: Validate GitHub Actions
         uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
         with:

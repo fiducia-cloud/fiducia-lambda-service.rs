@@ -3,6 +3,8 @@
 //! documented default, read once at boot.
 
 use std::net::IpAddr;
+
+use dd_nats_subject_defs::WORKFLOWS_EVENTS_SUBJECT;
 use thiserror::Error;
 
 pub const DEFAULT_FIDUCIA_NODE_ORG_ID: &str = "fiducia-lambda-service";
@@ -128,10 +130,7 @@ impl Config {
             database_url: env_opt("LAMBDA_DATABASE_URL"),
             server_auth_secret,
             nats_url: env_opt("NATS_URL"),
-            workflow_event_subject: env_or(
-                "NATS_WORKFLOW_EVENT_SUBJECT",
-                "dd.remote.workflows.events",
-            ),
+            workflow_event_subject: env_or("NATS_WORKFLOW_EVENT_SUBJECT", WORKFLOWS_EVENTS_SUBJECT),
             fiducia_base_url,
             fiducia_node_internal_secret,
             fiducia_node_org_id,

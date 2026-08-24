@@ -50,6 +50,9 @@ fiducia-client = { path = "../fiducia-clients/clients/rust" }
 # logging setup used by the other Fiducia Rust services.
 fiducia-messaging = { path = "../fiducia-messaging.rs", features = ["nats"] }
 fiducia-telemetry = { path = "../fiducia-telemetry.rs" }
+# Compile the cross-cluster DD subject names from the pinned shared contract;
+# workflow events are consumed by workloads running in k8s-cluster.
+dd-nats-subject-defs = { git = "https://github.com/ORESoftware/k8s-libs-and-shared-defs", rev = "8330d0780a0e1807a7422cfe5e4d083f2c15b38b" }
 
 [features]
 default = []

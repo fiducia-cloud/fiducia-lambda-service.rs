@@ -311,6 +311,7 @@ impl Nats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dd_nats_subject_defs::WORKFLOWS_EVENTS_SUBJECT;
     use std::sync::atomic::Ordering;
 
     #[tokio::test]
@@ -328,7 +329,7 @@ mod tests {
             "workflow:wf-1:completed",
         );
 
-        nats.publish_event("fiducia.workflows.completed.v1", &envelope)
+        nats.publish_event(WORKFLOWS_EVENTS_SUBJECT, &envelope)
             .await;
         let error = nats
             .pool_dispatch("pool.invoke", "js", "fn-1", "{}", 5)

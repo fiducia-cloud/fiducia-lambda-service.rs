@@ -1,0 +1,127 @@
+name: One-shot keyless env audit repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repair-keyless-env-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-keyless-env-check-main
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.repository == 'fiducia-cloud/fiducia-lambda-service.rs' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Make env-check independent of plaintext bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('.just/env.just')
+          source = path.read_text(encoding='utf-8')
+          old = 'env-check: _env-dec\n'
+          if source.count(old) != 1:
+              raise SystemExit(f'expected exactly one keyless audit dependency, found {source.count(old)}')
+          source = source.replace(old, 'env-check:\n', 1)
+          path.write_text(source, encoding='utf-8')
+          PY
+
+          mkdir -p tests
+          cat > tests/test-keyless-env-check.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          root="$(git rev-parse --show-toplevel)"
+          cd "$root"
+
+          grep -Eq '^env-check:[[:space:]]*$' .just/env.just
+          if grep -Eq '^env-check:.*_env-dec' .just/env.just; then
+            echo 'env-check must not depend on the plaintext-directory bootstrap' >&2
+            exit 1
+          fi
+          test ! -e env/dec
+
+          trap_dir="$(mktemp -d)"
+          marker="$trap_dir/ores-sops-was-invoked"
+          cat > "$trap_dir/ores-sops" <<'TRAP'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf 'invoked\n' > "$ORES_SOPS_TRAP_MARKER"
+          exit 97
+          TRAP
+          chmod 0755 "$trap_dir/ores-sops"
+
+          env \
+            -u SOPS_AGE_KEY \
+            -u SOPS_AGE_KEY_FILE \
+            PATH="$trap_dir:$PATH" \
+            ORES_SOPS_TRAP_MARKER="$marker" \
+            just env-check
+
+          test ! -e "$marker"
+          test ! -e env/dec
+          printf 'keyless env-check boundary: PASS\n'
+          SH
+          chmod 0755 tests/test-keyless-env-check.sh
+
+      - name: Install checksum-verified Just 1.51.0
+        shell: bash
+        env:
+          JUST_VERSION: '1.51.0'
+          JUST_SHA256: c8f085ca3e885723c341d06243fc291b5abfdc8bbe3b2c076b117de490387b59
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/just.tar.gz"
+          curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+            "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            -o "$archive"
+          printf '%s  %s\n' "$JUST_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" just
+          sudo install -m 0755 "$RUNNER_TEMP/just" /usr/local/bin/just
+          test "$(just --version)" = "just ${JUST_VERSION}"
+
+      - name: Prove the fresh-clone audit is keyless
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tests/test-keyless-env-check.sh
+          tests/test-keyless-env-check.sh
+          git diff --check
+
+      - name: Commit the verified direct-main repair and remove this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -- .github/workflows/repair-keyless-env-check.yml
+          git add -- .just/env.just
+          git add --chmod=+x -- tests/test-keyless-env-check.sh
+          git diff --cached --check
+          unexpected="$(
+            git diff --cached --name-only |
+              grep -Ev '^(\.github/workflows/repair-keyless-env-check\.yml|\.just/env\.just|tests/test-keyless-env-check\.sh)$' || true
+          )"
+          if [[ -n "$unexpected" ]]; then
+            printf 'Refusing unexpected staged paths:\n%s\n' "$unexpected" >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(#34): keep the encrypted-environment audit keyless'
+          git push origin HEAD:main

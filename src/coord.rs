@@ -287,6 +287,7 @@ impl Coordinator {
         heartbeat_interval: Duration,
         retry_interval: Duration,
     ) {
+        const ROUTINE_ID: &str = "ores-routine-RVWJyNCBsQ0bxJg0w6yG8";
         if self.inner.is_none() || *shutdown.borrow() {
             return;
         }
@@ -312,11 +313,21 @@ impl Coordinator {
                                 self.registration_recoveries.fetch_add(1, Ordering::Relaxed);
                                 needs_registration = false;
                                 tracing::info!(instance = %self.instance_id, "fiducia-node service registration recovered");
+                                let _ = crate::ores_log::logger()
+                                    .info(vec![serde_json::json!("fiducia-node service registration recovered")])
+                                    .add_trace("ores-trace-4wNqwQAMrDxET3SFw2yxt", false)
+                                    .add_routine_id(ROUTINE_ID)
+                                    .send();
                             }
                             Err(error) => {
                                 self.registration_healthy.store(false, Ordering::Relaxed);
                                 self.registration_reregistration_failures.fetch_add(1, Ordering::Relaxed);
                                 tracing::warn!(%error, instance = %self.instance_id, "fiducia-node service re-registration failed; remaining degraded");
+                                let _ = crate::ores_log::logger()
+                                    .warn(vec![serde_json::json!("fiducia-node service re-registration failed; remaining degraded")])
+                                    .add_trace("ores-trace-bSa24U0S-6M-IdFyGRTW2", false)
+                                    .add_routine_id(ROUTINE_ID)
+                                    .send();
                             }
                         }
                     } else if let Err(error) = self.heartbeat_service_once().await {
@@ -324,6 +335,11 @@ impl Coordinator {
                         self.registration_heartbeat_failures.fetch_add(1, Ordering::Relaxed);
                         needs_registration = true;
                         tracing::warn!(%error, instance = %self.instance_id, "fiducia-node service registration heartbeat failed; entering degraded state");
+                        let _ = crate::ores_log::logger()
+                            .warn(vec![serde_json::json!("fiducia-node service registration heartbeat failed; entering degraded state")])
+                            .add_trace("ores-trace-HpKc-K7vd8ceB6RImnOmX", false)
+                            .add_routine_id(ROUTINE_ID)
+                            .send();
                     } else {
                         self.registration_healthy.store(true, Ordering::Relaxed);
                     }

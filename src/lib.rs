@@ -24,6 +24,7 @@ pub mod http;
 pub mod messaging;
 pub mod metrics;
 pub mod nats;
+pub mod ores_log;
 pub mod runtime;
 pub mod util;
 pub mod workflow;

@@ -171,6 +171,7 @@ impl Nats {
     }
 
     async fn client(&self) -> Option<async_nats::Client> {
+        const ROUTINE_ID: &str = "ores-routine-7JCCW0jL2iwHYIoOUEU0L";
         let url = self.url.as_ref()?;
         let mut connection = self.connection.lock().await;
         if let Some(client) = connection.client.as_ref() {
@@ -199,6 +200,14 @@ impl Nats {
                     retry_after_seconds = 5,
                     "NATS connect failed; delivery is degraded"
                 );
+                let _ = crate::ores_log::logger()
+                    .warn(vec![
+                        serde_json::json!("NATS connect failed; delivery is degraded"),
+                        serde_json::json!({ "retry_after_seconds": 5 }),
+                    ])
+                    .add_trace("ores-trace-v0eA8DJyYz4jBOiWWfkZo", false)
+                    .add_routine_id(ROUTINE_ID)
+                    .send();
                 None
             }
         }
@@ -214,6 +223,7 @@ impl Nats {
     /// `FIDUCIA_NATS_STRICT_PUBLISH=1` an unacknowledged JetStream publish is
     /// an error — never quietly downgraded to Core NATS.
     pub async fn publish_event<T: Serialize>(&self, subject: &str, envelope: &MessageEnvelope<T>) {
+        const ROUTINE_ID: &str = "ores-routine-gW8ivvcVvB0iMVIDUYaWd";
         let Some(client) = self.client().await else {
             if self.url.is_some() {
                 self.metrics.nats_unavailable_drops_total(1);
@@ -227,6 +237,11 @@ impl Nats {
             Err(e) => {
                 self.metrics.nats_serialization_failures_total(1);
                 tracing::warn!(error = %e, "failed to serialize NATS envelope");
+                let _ = crate::ores_log::logger()
+                    .warn(vec![serde_json::json!("failed to serialize NATS envelope")])
+                    .add_trace("ores-trace-ONbYeamdEvZPF0vQLI3_J", false)
+                    .add_routine_id(ROUTINE_ID)
+                    .send();
                 return;
             }
         };
@@ -243,6 +258,13 @@ impl Nats {
                 subject,
                 "JetStream publish was not acknowledged; strict mode forbids the Core NATS fallback"
             );
+            let _ = crate::ores_log::logger()
+                .error(vec![serde_json::json!(
+                    "JetStream publish was not acknowledged; strict mode forbids the Core NATS fallback"
+                )])
+                .add_trace("ores-trace-MFQIzIZcUBkYov_FY70UU", false)
+                .add_routine_id(ROUTINE_ID)
+                .send();
             self.invalidate_client().await;
             return;
         }
@@ -263,6 +285,13 @@ impl Nats {
                     subject,
                     "Core NATS fallback publish failed; event was not delivered"
                 );
+                let _ = crate::ores_log::logger()
+                    .error(vec![serde_json::json!(
+                        "Core NATS fallback publish failed; event was not delivered"
+                    )])
+                    .add_trace("ores-trace-yxZaqPrX8Jyd4pMVJRxqi", false)
+                    .add_routine_id(ROUTINE_ID)
+                    .send();
                 self.invalidate_client().await;
             }
         }

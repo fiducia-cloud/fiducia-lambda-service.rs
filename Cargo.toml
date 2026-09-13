@@ -30,6 +30,9 @@ tracing = "0.1"
 tower-http = { version = "0.6", features = ["trace", "catch-panic"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# next-loggers/v1 structured logging (ores-otel/ores.otel.log Rust SDK), pinned
+# to a reviewed revision; used for ores-trace call-site instrumentation.
+next-loggers = { package = "oresoftware-next-loggers", git = "https://github.com/ores-otel/ores.otel.log", rev = "4a9d90b1059af268e94b47eeb4210d9454686f9a" }
 parking_lot = "0.12"
 regex = "1"
 # NATS is the cross-service message bus (workflow events, container-pool

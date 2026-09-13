@@ -300,6 +300,7 @@ impl Engine {
     /// Advance one run by exactly one step. Acquires the fiducia-node run lease
     /// first (authority); if another replica holds it, this tick is a no-op.
     async fn process_run(&self, view: RunView) {
+        const ROUTINE_ID: &str = "ores-routine-YjzuYC-Qx24fh2YVCoVzN";
         let run_id = view.json["id"].as_str().unwrap_or("").to_string();
         let lease = match self.coord.try_lease_run(&run_id).await {
             Ok(Some(lease)) => lease,
@@ -307,6 +308,13 @@ impl Engine {
             Err(e) => {
                 WfMetrics::inc(&self.metrics.worker_exceptions);
                 tracing::error!(error = %e, run_id, "run lease unavailable; refusing to advance run");
+                let _ = crate::ores_log::logger()
+                    .error(vec![serde_json::json!(
+                        "run lease unavailable; refusing to advance run"
+                    )])
+                    .add_trace("ores-trace-qoAKgcee_w2grfyafgjtd", false)
+                    .add_routine_id(ROUTINE_ID)
+                    .send();
                 return;
             }
         };

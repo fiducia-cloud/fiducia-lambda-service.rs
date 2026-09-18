@@ -339,8 +339,15 @@ fn marker_literals(line: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Matches `const|let|var|static` ... `= "ores-trace-..."` where the binding
+/// Matches `const|let|var|static` ... `= "ores-trace-<body>"` where the binding
 /// name mentions trace.
+///
+/// A declaration whose value is the *bare* `ores-trace-` prefix is not a
+/// hoisted id: it is the prefix a generator concatenates a body onto, as in
+/// `const TRACE_PREFIX: &str = "ores-trace-";`. `marker_literals` already draws
+/// that line, so this reuses it instead of matching the raw prefix, which would
+/// otherwise fail every id generator and validator in the fleet on its own
+/// constants.
 fn hoisted_trace_decl(line: &str) -> Option<String> {
     let l = line.trim();
     let lower = l.to_lowercase();
@@ -358,8 +365,7 @@ fn hoisted_trace_decl(line: &str) -> Option<String> {
     if !name.to_lowercase().contains("trace") {
         return None;
     }
-    if val.contains("\"ores-trace-") || val.contains("'ores-trace-") || val.contains("`ores-trace-")
-    {
+    if marker_literals(val).iter().any(|(kind, _)| kind == "trace") {
         return Some(name.trim().to_string());
     }
     None

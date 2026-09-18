@@ -27,6 +27,11 @@ jobs:
       - name: Build the contract checker
         run: rustc -O -o "$RUNNER_TEMP/ores-trace-contract" .github/ores-trace-contract.rs
 
+      - name: Self-test the contract checker
+        run: |
+          rustc --test -o "$RUNNER_TEMP/ores-trace-contract-test" .github/ores-trace-contract.rs
+          "$RUNNER_TEMP/ores-trace-contract-test"
+
       - name: Verify static ORES trace markers
         run: |
           "$RUNNER_TEMP/ores-trace-contract" .

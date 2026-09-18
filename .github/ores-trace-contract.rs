@@ -181,17 +181,22 @@ fn scan_calls(line: &str, methods: &[&str]) -> Vec<(String, Option<String>)> {
 }
 
 fn check_line(file: &str, no: usize, line: &str, f: &mut Vec<Finding>) {
-    // Documentation prose and matcher/auditor code name these literals without
-    // being call sites.
-    if is_comment(line) || is_matcher(line) {
+    // Documentation prose never contains a call site at all.
+    if is_comment(line) {
         return;
     }
+    // Matcher/auditor code names these literals without emitting them, so the
+    // prefix, hoisting and bare-shape rules are suppressed on such a line --
+    // but the call-site rules (3 and 4) still run, because a real
+    // `.add_trace("..")` does not stop being a call site just because the same
+    // line also happens to contain `.contains(` or `assert!(`.
+    let matcher = is_matcher(line);
     let push = |f: &mut Vec<Finding>, msg: String| {
         f.push(Finding { file: file.to_string(), line: no, msg })
     };
 
     // 1. retired prefix. Split so this checker's own source never trips it.
-    if line.contains(concat!("dd", "-trace-")) {
+    if !matcher && line.contains(concat!("dd", "-trace-")) {
         push(f, "legacy dd-trace-* marker; use an inline ores-trace-* id".into());
     }
 
@@ -233,7 +238,7 @@ fn check_line(file: &str, no: usize, line: &str, f: &mut Vec<Finding>) {
     // 5. hoisted trace ids: a static ores-trace-* belongs inline at the call
     //    site, never parked in a variable that several call sites share.
     //    (Routine ids are the opposite: they are declared once per function.)
-    if let Some(rest) = hoisted_trace_decl(line) {
+    if let Some(rest) = hoisted_trace_decl(line).filter(|_| !matcher) {
         push(f, format!("static ores-trace-* id must stay inline at the call site, not in `{rest}`"));
     }
 
@@ -241,7 +246,7 @@ fn check_line(file: &str, no: usize, line: &str, f: &mut Vec<Finding>) {
     //    reaches it. A call split across lines, a nested/chained call site, or
     //    an id parked in a constant all still land here, so a truncated id
     //    cannot hide from the call-site matcher above.
-    if !is_pattern_decl(line) {
+    if !matcher && !is_pattern_decl(line) {
         // Ids the call-site rules already reported on this line, so a bad
         // marker is named once rather than twice.
         let already: Vec<String> = f
@@ -287,6 +292,10 @@ fn is_comment(line: &str) -> bool {
         || t.starts_with('*')
         || t.starts_with("<!--")
         || t.starts_with("--")
+        // Elixir/Ruby/shell line comments. A Rust attribute is `#[` or `#!`,
+        // never `# `, so this cannot swallow an attribute line.
+        || t.starts_with("# ")
+        || t == "#"
 }
 
 /// Lines that *detect* a marker rather than emit one: the fleet's own auditors,
@@ -339,19 +348,25 @@ fn marker_literals(line: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Matches `const|let|var|static` ... `= "ores-trace-<body>"` where the binding
+/// Matches `const|let|var|static` ... `= "ores-trace-..."` where the binding
 /// name mentions trace.
-///
-/// A declaration whose value is the *bare* `ores-trace-` prefix is not a
-/// hoisted id: it is the prefix a generator concatenates a body onto, as in
-/// `const TRACE_PREFIX: &str = "ores-trace-";`. `marker_literals` already draws
-/// that line, so this reuses it instead of matching the raw prefix, which would
-/// otherwise fail every id generator and validator in the fleet on its own
-/// constants.
 fn hoisted_trace_decl(line: &str) -> Option<String> {
-    let l = line.trim();
+    let mut l = line.trim();
+    // Strip visibility/modifier keywords so `pub const`, `export const`,
+    // `pub(crate) static`, `public static final` are still seen as declarations.
+    loop {
+        let lower = l.to_lowercase();
+        let stripped = ["pub(crate) ", "pub(super) ", "pub ", "export ", "public ", "private ", "protected ", "declare "]
+            .iter()
+            .find(|k| lower.starts_with(*k))
+            .map(|k| l[k.len()..].trim_start());
+        match stripped {
+            Some(next) => l = next,
+            None => break,
+        }
+    }
     let lower = l.to_lowercase();
-    let is_decl = ["const ", "let ", "var ", "static ", "final "]
+    let is_decl = ["const ", "let ", "var ", "static ", "final ", "val "]
         .iter()
         .any(|k| lower.starts_with(k));
     if !is_decl {
@@ -365,10 +380,27 @@ fn hoisted_trace_decl(line: &str) -> Option<String> {
     if !name.to_lowercase().contains("trace") {
         return None;
     }
-    if marker_literals(val).iter().any(|(kind, _)| kind == "trace") {
+    // A bare `"ores-trace-"` with no id after it is a PREFIX CONSTANT used to
+    // build or match ids, not a hoisted marker, so it must not be flagged.
+    let quoted = val.contains("\"ores-trace-") || val.contains("'ores-trace-") || val.contains("`ores-trace-");
+    if quoted && marker_literals(val).iter().any(|(k, _)| k == "trace") {
         return Some(name.trim().to_string());
     }
     None
+}
+
+/// True when the first non-blank, non-attribute line after `idx` declares a
+/// module, i.e. the `#[cfg(test)]` at `idx` guards a test MODULE rather than a
+/// single item. Only that shape is treated as end-of-production-code.
+fn next_is_mod(lines: &[&str], idx: usize) -> bool {
+    for l in lines.iter().skip(idx + 1) {
+        let t = l.trim_start();
+        if t.is_empty() || t.starts_with("#[") || t.starts_with("//") {
+            continue;
+        }
+        return t.starts_with("mod ") || t.starts_with("pub mod ");
+    }
+    false
 }
 
 fn main() -> ExitCode {
@@ -398,13 +430,17 @@ fn main() -> ExitCode {
             continue;
         }
         checked += 1;
-        for (i, line) in text.lines().enumerate() {
-            // Rust keeps its unit tests inline behind `#[cfg(test)]`, and those
-            // fixtures deliberately carry malformed ids. Everything from the
-            // test module to end of file is fixture territory.
-            if ext == "rs" && line.trim_start().starts_with("#[cfg(test)]") {
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            // Rust keeps its unit tests inline behind `#[cfg(test)] mod tests`,
+            // and those fixtures deliberately carry malformed ids. Stop only at
+            // that trailing TEST MODULE -- a `#[cfg(test)]` on any other item
+            // (a `use`, a helper fn, a const) must NOT blind the checker to the
+            // rest of the file.
+            if ext == "rs" && line.trim_start().starts_with("#[cfg(test)]") && next_is_mod(&lines, i) {
                 break;
             }
+            let line = *line;
             if line.contains("ores-trace-") || line.contains("ores-routine-") {
                 markers += 1;
             }
@@ -424,4 +460,144 @@ fn main() -> ExitCode {
         eprintln!("  {}:{}: {}", f.file, f.line, f.msg);
     }
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Messages the line-level rules produce for one source line.
+    fn msgs(line: &str) -> Vec<String> {
+        let mut f = Vec::new();
+        check_line("x.rs", 1, line, &mut f);
+        f.into_iter().map(|x| x.msg).collect()
+    }
+
+    const GOOD: &str = "ores-trace-V1sTq7bK2mNp4Rd8Xe0Lz"; // 21-char nanoid
+
+    #[test]
+    fn id_length_is_pinned_to_exactly_21() {
+        assert!(id_ok(GOOD, "trace"));
+        assert_eq!(GOOD.len(), "ores-trace-".len() + 21);
+        // 20 and 22 are the off-by-one cases the loose {12,64} guard accepted.
+        assert!(!id_ok("ores-trace-AAAAAAAAAAAAAAAAAAAA", "trace"));
+        assert!(!id_ok("ores-trace-BBBBBBBBBBBBBBBBBBBBBB", "trace"));
+        assert!(!id_ok("ores-trace-", "trace"));
+        assert!(!id_ok("ores-routine-V1sTq7bK2mNp4Rd8Xe0Lz", "trace"));
+        assert!(id_ok("ores-routine-V1sTq7bK2mNp4Rd8Xe0Lz", "routine"));
+    }
+
+    #[test]
+    fn conforming_call_site_is_clean() {
+        assert!(msgs(&format!(
+            "    log.info(\"x\").add_trace(\"{GOOD}\", false).send();"
+        ))
+        .is_empty());
+    }
+
+    #[test]
+    fn bad_call_site_is_flagged_in_every_surface_syntax() {
+        // direct
+        assert!(!msgs("log.info(\"x\").add_trace(\"ores-trace-SHORT\", false);").is_empty());
+        // nested / chained
+        assert!(!msgs("outer(inner(l.info(\"x\").add_trace(\"ores-trace-SHORT\", false)));").is_empty());
+        // raw string (no leading quote, so only the shape rule can see it)
+        assert!(!msgs("l.add_trace(r\"ores-trace-SHORT\", false);").is_empty());
+        // macro argument
+        assert!(!msgs("emit!(\"ores-trace-SHORT\");").is_empty());
+        // the continuation line of a call split across lines
+        assert!(!msgs("            \"ores-trace-SHORT\",").is_empty());
+    }
+
+    /// Regression: a matcher needle anywhere on the line used to suppress the
+    /// WHOLE line, so a real call site could hide behind `.contains(`.
+    #[test]
+    fn matcher_needle_does_not_hide_a_real_call_site() {
+        let line =
+            "if p.contains(\"/health\") { l.info(\"x\").add_trace(\"ores-trace-SHORT\", false); }";
+        assert!(
+            msgs(line).iter().any(|m| m.contains("is not a static marker")),
+            "matcher needle suppressed a call site: {:?}",
+            msgs(line)
+        );
+    }
+
+    /// Regression: `#[cfg(test)]` on a non-module item must not blind the
+    /// checker to the rest of the file; only a trailing test MODULE does.
+    #[test]
+    fn cfg_test_stops_scanning_only_at_a_test_module() {
+        let m = ["#[cfg(test)]", "mod tests {"];
+        assert!(next_is_mod(&m, 0));
+        let u = ["#[cfg(test)]", "use std::fmt;", "pub fn real() {}"];
+        assert!(!next_is_mod(&u, 0));
+        let f = ["#[cfg(test)]", "fn helper() {}"];
+        assert!(!next_is_mod(&f, 0));
+        let blank = ["#[cfg(test)]", "", "pub mod tests {"];
+        assert!(next_is_mod(&blank, 0));
+    }
+
+    /// Regression: a bare `"ores-trace-"` is a PREFIX CONSTANT, not a hoisted
+    /// marker, whatever the binding is called.
+    #[test]
+    fn prefix_constants_and_header_names_are_not_violations() {
+        assert!(msgs("const TracePrefix = \"ores-trace-\"").is_empty());
+        assert!(msgs("pub const TRACE_ID_PREFIX: &str = \"ores-trace-\";").is_empty());
+        assert!(msgs("const TRACE_HEADER: &str = \"x-ores-trace-id\";").is_empty());
+        assert!(msgs("    headers.insert(\"x-ores-trace-id\", v);").is_empty());
+        assert!(marker_literals("\"x-ores-trace-id\"").is_empty());
+    }
+
+    /// Regression: visibility keywords used to let a hoisted id through.
+    #[test]
+    fn hoisted_trace_ids_are_flagged_through_visibility_keywords() {
+        for decl in [
+            format!("const SHARED_TRACE: &str = \"{GOOD}\";"),
+            format!("pub const SHARED_TRACE: &str = \"{GOOD}\";"),
+            format!("pub(crate) static SHARED_TRACE: &str = \"{GOOD}\";"),
+            format!("export const traceId = \"{GOOD}\";"),
+        ] {
+            assert!(
+                hoisted_trace_decl(&decl).is_some(),
+                "hoisted id not detected: {}",
+                decl
+            );
+        }
+        // A routine id declared once per function is the required shape, not a
+        // violation.
+        assert!(msgs(&format!(
+            "    const ROUTINE_ID: &str = \"ores-routine-V1sTq7bK2mNp4Rd8Xe0Lz\";"
+        ))
+        .is_empty());
+    }
+
+    /// Regression: `#` line comments (Elixir/Ruby) were read as code.
+    #[test]
+    fn hash_comments_are_prose_but_attributes_are_not() {
+        assert!(is_comment("# the old marker was ores-trace-abc123"));
+        assert!(msgs("  # historical: ores-trace-abc123 was retired").is_empty());
+        assert!(!is_comment("#[derive(Debug)]"));
+        assert!(!is_comment("#![allow(dead_code)]"));
+    }
+
+    #[test]
+    fn auditor_and_doc_lines_do_not_self_trip() {
+        assert!(msgs("    if line.contains(\"ores-trace-\") { }").is_empty());
+        assert!(msgs("/// each call site carries its own ores-trace-abc marker").is_empty());
+        assert!(msgs("    \"pattern\": \"^ores-trace-[A-Za-z0-9_-]{21}$\"").is_empty());
+    }
+
+    #[test]
+    fn retired_prefix_and_wrong_method_are_flagged() {
+        let dd = format!("l.add_trace(\"{}\", false);", concat!("dd", "-trace-abc"));
+        assert!(!msgs(&dd).is_empty());
+        assert!(msgs("l.addRoutine(ROUTINE_ID);")
+            .iter()
+            .any(|m| m.contains("addRoutineId")));
+    }
+
+    #[test]
+    fn longer_identifiers_are_not_call_sites() {
+        assert!(scan_calls("x.addTraceIdFrom(ctx)", TRACE_METHODS).is_empty());
+        assert!(msgs("x.addTraceIdFrom(ctx)").is_empty());
+    }
 }
